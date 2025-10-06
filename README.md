@@ -1,6 +1,16 @@
 # Kp Index Space Weather Monitor
 
-A Python-based monitoring system that tracks the Kp geomagnetic index from GFZ Space weather and sends automated email alerts when space weather conditions exceed specified thresholds.
+A Python-based monitoring system that tracks the Kp geomagnetic index from GFZ Potsdam and sends automated email alerts when space weather conditions exceed specified thresholds.
+
+## Features
+
+- **Real-time monitoring** of Kp geomagnetic index from GFZ data
+- **Configurable alert thresholds** with YAML-based configuration
+- **Email notifications** via local SMTP (Linux mail system)
+- **Multiple operation modes**: single check, continuous monitoring, summary reports
+- **Comprehensive logging** with configurable levels
+- **Smart alert management** to prevent spam (6-hour cooldown between alerts)
+- **HTML-formatted emails** with detailed space weather information
 
 ## Quick Start
 
@@ -10,101 +20,176 @@ A Python-based monitoring system that tracks the Kp geomagnetic index from GFZ S
 pip install -r requirements.txt
 ```
 
-### 2. Configure Email Settings
+### 2. Configure Settings
 
-Copy and edit the configuration file:
+Edit `config.yaml` to customize your monitoring setup:
 
-```bash
-cp config.py my_config.py
+```yaml
+# Alert settings
+kp_alert_threshold: 5.0 # Kp value to trigger alerts (0-9 scale)
+check_interval_hours: 3.0 # Hours between checks in continuous mode
+
+# Email recipients
+recipients:
+  - "spaceweather@yourorg.com"
+  - "alerts@yourorg.com"
+
+# Logging configuration
+log_file: "kp_index_monitor.log"
+log_level: "INFO" # DEBUG, INFO, WARNING, ERROR
 ```
 
-### 3. Test Email Functionality
+### 3. Test the System
+
+First, test data fetching:
 
 ```bash
-python kp_index_monitor.py --test
+python -m src.kp_fetch_test.py
 ```
 
-### 4. Run Single Check
+Then test email functionality:
 
 ```bash
-python kp_index_monitor.py --once
+python -m src.kp_index_monitor --test
 ```
 
-### 5. Start Continuous Monitoring
+### 4. Run Monitoring
+
+**Single check:**
 
 ```bash
-python kp_index_monitor.py --continuous
+python -m src.kp_index_monitor --once
+```
+
+**Continuous monitoring:**
+
+```bash
+python -m src.kp_index_monitor --continuous
+```
+
+**Summary report:**
+
+```bash
+python -m src.kp_index_monitor --summary
 ```
 
 ## Configuration
 
-Edit `config.py` to customize system settings:
+### Configuration File
 
-### Email Settings
+The system uses YAML configuration files for easy management. You can specify a custom config file using the `KP_MONITOR_CONFIG` environment variable:
 
-**For Gmail:**
-```python
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-EMAIL_USER = "your_email@gmail.com"
-EMAIL_PASSWORD = "your_app_password"  # Use App Password, not regular password
+```bash
+export KP_MONITOR_CONFIG=/path/to/custom_config.yaml
+python -m src.kp_index_monitor --once
 ```
 
-**For Outlook:**
-```python
-SMTP_SERVER = "smtp-mail.outlook.com"
-SMTP_PORT = 587
-EMAIL_USER = "your_email@outlook.com"
-EMAIL_PASSWORD = "your_password"
+### Configuration Options
+
+| Parameter              | Type   | Description                | Valid Range              |
+| ---------------------- | ------ | -------------------------- | ------------------------ |
+| `kp_alert_threshold`   | float  | Kp value triggering alerts | 0.0 - 9.0                |
+| `check_interval_hours` | float  | Hours between checks       | > 0.0                    |
+| `recipients`           | list   | Email addresses for alerts | Valid email format       |
+| `log_file`             | string | Path to log file           | Valid file path          |
+| `log_level`            | string | Logging verbosity          | DEBUG/INFO/WARNING/ERROR |
+
+### Example Configurations
+
+**Research Station (High Sensitivity):**
+
+```yaml
+kp_alert_threshold: 4.0
+check_interval_hours: 1.0
+recipients: ["operations@station.gov"]
+log_file: "kp_monitor_station.log"
+log_level: "DEBUG"
 ```
 
-### Alert Recipients
-```python
-ALERT_RECIPIENTS = [
-    "spaceweather-team@institution.edu",
-    "alert1@institution.edu",
-    "alert2@institution.edu"
-]
-```
+**Power Grid Monitoring (Critical Events Only):**
 
-### Monitoring Settings
-```python
-KP_ALERT_THRESHOLD = 5.0  # Alert when Kp exceeds this value
-CHECK_INTERVAL_HOURS = 3  # Check interval in hours
+```yaml
+kp_alert_threshold: 6.0
+check_interval_hours: 0.5
+recipients: ["grid-ops@utility.com", "duty-manager@utility.com"]
+log_file: "kp_monitor_grid.log"
+log_level: "INFO"
 ```
 
 ## Operation Modes
 
 ### Single Check Mode
+
 Run one monitoring check and exit:
+
 ```bash
-python kp_index_monitor.py --once
+python -m src.kp_index_monitor --once
 ```
+
+_Perfect for cron jobs or testing_
 
 ### Continuous Monitoring Mode
+
 Run continuously with scheduled checks:
+
 ```bash
-python kp_index_monitor.py --continuous
+python -m src.kp_index_monitor --continuous
 ```
+
+_Ideal for dedicated monitoring servers_
 
 ### Test Mode
+
 Test email functionality:
+
 ```bash
-python kp_index_monitor.py --test
+python -m src.kp_index_monitor --test
 ```
 
+_Sends a test email to verify configuration_
+
 ### Summary Email Mode
-Send current space weather summary to a specific email:
+
+Send current space weather summary:
+
 ```bash
-python kp_index_monitor.py --summary --email scientist@university.edu
+python -m src.kp_index_monitor --summary
 ```
+
+_Generates comprehensive status report_
+
+## Email System Requirements
+
+This system uses the **local Linux mail system** (localhost SMTP) to send emails. This approach is more reliable for server deployments than external SMTP.
+
+### Setup Local Mail System
+
+**Ubuntu/Debian:**
+
+```bash
+sudo apt-get install postfix mailutils
+sudo dpkg-reconfigure postfix
+```
+
+**CentOS/RHEL:**
+
+```bash
+sudo yum install postfix mailx
+sudo systemctl enable postfix
+sudo systemctl start postfix
+```
+
+### Alternative: External SMTP
+
+If you prefer external SMTP, modify the `send_alert()` method in `kp_index_monitor.py` to use your preferred SMTP server and authentication.
 
 ## Data Source and Format
 
 ### Source Information
-- **Provider**: GFZ German Research Centre for Geosciences
-- **URL**: https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/
-- **Update Frequency**: Every 3 hours. ##todo check the code for this use
+
+- **Provider**: GFZ Helmholtz Centre for Geosciences
+- **URL**: https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv
+- **Update Frequency**: Every 3 hours (GFZ updates their forecast data)
 - **Format**: CSV with ensemble forecast data
 
 ### Forecast Data Structure
@@ -112,16 +197,19 @@ python kp_index_monitor.py --summary --email scientist@university.edu
 The latest ensemble predictions contain the following information:
 
 #### Time Format
+
 - **Time (UTC)**: Forecast time in dd-mm-yyyy HH:MM format
 
 #### Statistical Measures
+
 - **minimum**: Minimum forecasted Kp value
 - **0.25-quantile**: Value such that 25% of forecasts are below this level
 - **median**: Median forecasted Kp value
-- **0.75-quantile**: Value such that 75% of forecasts are below this level  
+- **0.75-quantile**: Value such that 75% of forecasts are below this level
 - **maximum**: Maximum forecasted Kp value
 
 #### Probability Ranges
+
 - **prob 4-5**: Probability of 4 ≤ Kp ≤ 5
 - **prob 5-6**: Probability of 5 ≤ Kp ≤ 6
 - **prob 6-7**: Probability of 6 ≤ Kp ≤ 7
@@ -129,7 +217,8 @@ The latest ensemble predictions contain the following information:
 - **prob ≥ 8**: Probability of Kp ≥ 8
 
 #### Ensemble Members
-- **Individual ensemble members**: Indexed by _i, where i is a progressive integer number
+
+- **Individual ensemble members**: Indexed by \_i, where i is a progressive integer number
 - **Current ensemble size**: Varies between 12 and 20 members
 
 ## Alert System
@@ -138,110 +227,143 @@ The latest ensemble predictions contain the following information:
 
 The Kp index scale and corresponding geomagnetic storm levels:
 
-| Kp Range | Classification | NOAA Scale | Impact Level |
-|----------|---------------|------------|--------------|
-| Kp 0-2   | Quiet         | -          | No impact    |
-| Kp 3-4   | Unsettled to Active | -    | Minor impact |
-| Kp 5     | Minor Storm   | G1         | Weak power grid fluctuations |
-| Kp 6     | Moderate Storm | G2        | High-latitude power systems affected |
-| Kp 7     | Strong Storm  | G3         | Power systems voltage corrections needed |
-| Kp 8     | Severe Storm  | G4         | Widespread voltage control problems |
-| Kp 9     | Extreme Storm | G5         | Complete power system blackouts possible |
+| Kp Range | Classification      | NOAA Scale | Impact Level                             |
+| -------- | ------------------- | ---------- | ---------------------------------------- |
+| Kp 0-2   | Quiet               | -          | No impact                                |
+| Kp 3-4   | Unsettled to Active | -          | Minor impact                             |
+| Kp 5     | Minor Storm         | G1         | Weak power grid fluctuations             |
+| Kp 6     | Moderate Storm      | G2         | High-latitude power systems affected     |
+| Kp 7     | Strong Storm        | G3         | Power systems voltage corrections needed |
+| Kp 8     | Severe Storm        | G4         | Widespread voltage control problems      |
+| Kp 9     | Extreme Storm       | G5         | Complete power system blackouts possible |
 
 ### Sample Alert Email
 
-```
-SPACE WEATHER ALERT - High Kp Index Detected
-
-ALERT SUMMARY:
-• Current Maximum Kp Index: 6.33
-• Alert Threshold: 5.0
-• Alert Time: 2025-01-10 15:30:00 UTC
-
-HIGH Kp PERIODS DETECTED:
-• 2025-01-10 15:00:00 UTC: Kp = 6.33
-• 2025-01-10 18:00:00 UTC: Kp = 5.67
-
-GEOMAGNETIC STORM LEVELS:
-• Kp 5: Minor geomagnetic storm (G1)
-• Kp 6: Moderate geomagnetic storm (G2)
-• Kp 7: Strong geomagnetic storm (G3)
-• Kp 8: Severe geomagnetic storm (G4)
-• Kp 9: Extreme geomagnetic storm (G5)
-
-POTENTIAL IMPACTS:
-• Satellite operations may be affected
-• Radio communications may experience disruption
-• Aurora activity may be visible at lower latitudes
-• Power grid fluctuations possible
-```
+>   <html><body>
+>   <h2><strong>SPACE WEATHER ALERT - High Kp Index Detected</strong></h2>
+>
+>   <h3><strong>ALERT SUMMARY:</strong></h3>
+>   <ul>
+>   <li><strong>Current Maximum Kp Index:</strong> 2.67</li>
+>   <li><strong>Alert Threshold:</strong> 2.0</li>
+>               <li><strong>Alert Time:</strong> 2025-10-06 09:36:39 UTC</li>
+>   </ul>
+>
+>   <h3><strong>HIGH KP INDEX PERIODS DETECTED:</strong></h3>
+>   <ul>
+>   <li><strong>06-10-2025 09:00 UTC:</strong> Kp =3D 2.67</li>
+>   <li><strong>06-10-2025 12:00 UTC:</strong> Kp =3D 3.67</li>
+>   <li><strong>06-10-2025 15:00 UTC:</strong> Kp =3D 4.67</li>
+>   <li><strong>06-10-2025 18:00 UTC:</strong> Kp =3D 7.67</li>
+>   <li><strong>06-10-2025 21:00 UTC:</strong> Kp =3D 7.00</li>
+>   <li><strong>07-10-2025 00:00 UTC:</strong> Kp =3D 4.67</li>
+>   <li><strong>07-10-2025 03:00 UTC:</strong> Kp =3D 3.33</li>
+>   <li><strong>07-10-2025 06:00 UTC:</strong> Kp =3D 2.67</li>
+>   <li><strong>09-10-2025 09:00 UTC:</strong> Kp =3D 2.67</li>
+>   </ul>
+>
+>   <h3><strong>GEOMAGNETIC STORM LEVELS:</strong></h3>
+>   <ul>
+>   <li><strong>Kp 5:</strong> Minor geomagnetic storm (G1)</li>
+>   <li><strong>Kp 6:</strong> Moderate geomagnetic storm (G2)</li>
+>   <li><strong>Kp 7:</strong> Strong geomagnetic storm (G3)</li>
+>   <li><strong>Kp 8:</strong> Severe geomagnetic storm (G4)</li>
+>   <li><strong>Kp 9:</strong> Extreme geomagnetic storm (G5)</li>
+>   </ul>
+>
+>   <p><strong>DATA SOURCE:</strong> https://spaceweather.gfz.de/fileadmin/Kp-F=
+>   orecast/CSV/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv</p>
+>
+>   <p><em>This is an automated alert from the Kp Index Monitoring System.</em>=
+>   </p>
+>   </body></html>
 
 ### Sample Summary Email
 
-```
-SPACE WEATHER SUMMARY REPORT
-
-CURRENT STATUS: MODERATE STORM CONDITIONS [G2]
-• Report Time: 2025-01-10 15:30:00 UTC
-• Current Maximum Kp: 6.2
-• Alert Threshold: 5.0
-
-FORECAST DATA SUMMARY:
-The latest ensemble predictions contain the following information:
-• Time in UTC format: dd-mm-yyyy HH:MM
-• Minimum, 0.25-quantile, median, 0.75-quantile, maximum forecasted values
-• Probability ranges for different Kp levels
-• Individual ensemble members (currently varies between 12-20 members)
-
-NEXT 24 HOURS FORECAST:
-• 2025-01-10 15:00:00 UTC: Kp = 6.2 [ALERT]
-• 2025-01-10 18:00:00 UTC: Kp = 5.8 [ALERT]
-• 2025-01-10 21:00:00 UTC: Kp = 4.3 [ACTIVE]
-• 2025-01-11 00:00:00 UTC: Kp = 3.1 [QUIET]
-
-GEOMAGNETIC ACTIVITY SCALE:
-• Kp 0-2: Quiet conditions
-• Kp 3-4: Unsettled to Active conditions
-• Kp 5: Minor Storm (G1) - Weak power grid fluctuations
-• Kp 6: Moderate Storm (G2) - High-latitude power systems affected
-• Kp 7: Strong Storm (G3) - Power systems voltage corrections
-• Kp 8: Severe Storm (G4) - Widespread voltage control problems
-• Kp 9: Extreme Storm (G5) - Complete power system blackouts possible
-```
+>   <html><body>
+>   <h2><strong>SPACE WEATHER - KP Index SUMMARY REPORT</strong></h2>
+>
+>   <h3><strong>CURRENT STATUS:</strong> QUIET CONDITIONS [QUIET]</h3>
+>   <ul>
+>               <li><strong>Report Time:</strong> 2025-10-06 09:39:45 UTC</li>
+>   <li><strong>Current Maximum KP:</strong> 2.67</li>
+>   <li><strong>Alert Threshold:</strong> 2.0</li>
+>   </ul>
+>
+>   <h3><strong>NEXT 24 HOURS FORECAST:</strong></h3>
+>   <ul>
+>   <li><strong>2025-10-06 12:00:00+00:00 UTC:</strong> Kp =3D 3.67 (QUIET)</li=
+>   >
+>   <li><strong>2025-10-06 15:00:00+00:00 UTC:</strong> Kp =3D 4.67 (ACTIVE)</l=
+>   i>
+>   <li><strong>2025-10-06 18:00:00+00:00 UTC:</strong> Kp =3D 7.67 (ALERT)</li=
+>   >
+>   <li><strong>2025-10-06 21:00:00+00:00 UTC:</strong> Kp =3D 7.00 (ALERT)</li=
+>   >
+>   <li><strong>2025-10-07 00:00:00+00:00 UTC:</strong> Kp =3D 4.67 (ACTIVE)</l=
+>   i>
+>   <li><strong>2025-10-07 03:00:00+00:00 UTC:</strong> Kp =3D 3.33 (QUIET)</li=
+>   >
+>   <li><strong>2025-10-07 06:00:00+00:00 UTC:</strong> Kp =3D 2.67 (QUIET)</li=
+>   >
+>   <li><strong>2025-10-07 09:00:00+00:00 UTC:</strong> Kp =3D 1.67 (QUIET)</li=
+>   >
+>   </ul>
+>
+>   <h3><strong>GEOMAGNETIC ACTIVITY SCALE:</strong></h3>
+>   <ul>
+>   <li><strong>Kp 0-2:</strong> Quiet conditions</li>
+>   <li><strong>Kp 3-4:</strong> Unsettled to Active conditions</li>
+>   <li><strong>Kp 5:</strong> Minor Storm (G1) - Weak power grid fluctuations<=
+>   /li>
+>   <li><strong>Kp 6:</strong> Moderate Storm (G2) - High-latitude power system=
+>   s affected</li>
+>   <li><strong>Kp 7:</strong> Strong Storm (G3) - Power systems may experience=
+>   voltage corrections</li>
+>   <li><strong>Kp 8:</strong> Severe Storm (G4) - Possible widespread voltage =
+>   control problems</li>
+>   <li><strong>Kp 9:</strong> Extreme Storm (G5) - Widespread power system vol=
+>   tage control problems</li>
+>   </ul>
+>
+>   <h3><strong>FORECAST DATA SUMMARY:</strong></h3>
+>   <p>The latest ensemble predictions contain the following information:</p>
+>   <ul>
+>   <li>Time in UTC format: dd-mm-yyyy HH:MM</li>
+>   <li>Minimum, 0.25-quantile, median, 0.75-quantile, maximum forecasted value=
+>   s</li>
+>   <li>Probability ranges for different Kp levels</li>
+>   <li>Individual ensemble members (currently varies between 12-20 members)</l=
+>   i>
+>   </ul>
+>
+>   <p><strong>DATA SOURCE:</strong> https://spaceweather.gfz.de/fileadmin/Kp-F=
+>   orecast/CSV/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv</p>
+>
+>   <p><em>This is an automated summary from the Kp Index Monitoring System usi=
+>   ng GFZ Space Weather Forecast.</em></p>
+>   </body></html>
 
 ## Server Deployment
-
-### Using Linux Mail Command
-
-1. Install mail utilities:
-```bash
-# Ubuntu/Debian
-sudo apt-get install mailutils
-
-# CentOS/RHEL
-sudo yum install mailx
-```
-
-2. Configure system mail (optional):
-```bash
-sudo dpkg-reconfigure exim4-config
-```
-
-3. The script automatically uses Linux mail command on Unix systems.
 
 ### Using Cron for Automation
 
 Add to crontab for automatic execution:
+
 ```bash
 crontab -e
 
-# Run every 3 hours
-0 */3 * * * /usr/bin/python3 /path/to/kp_index_monitor.py --once
+# Run single check every 3 hours
+0 */3 * * * cd /path/to/kp_alert && /usr/bin/python3 -m src.kp_index_monitor --once
+
+# Daily summary at 8 AM
+0 8 * * * cd /path/to/kp_alert && /usr/bin/python3 -m src.kp_index_monitor --summary
 ```
 
 ### As a Systemd Service
 
 Create `/etc/systemd/system/kp-monitor.service`:
+
 ```ini
 [Unit]
 Description=Kp Index Space Weather Monitor
@@ -250,19 +372,22 @@ After=network.target
 [Service]
 Type=simple
 User=kp-monitor
-WorkingDirectory=/opt/kp-monitor
-ExecStart=/usr/bin/python3 /opt/kp-monitor/kp_index_monitor.py --continuous
+WorkingDirectory=/opt/kp-alert
+ExecStart=/usr/bin/python3 /opt/kp-alert/src/kp_index_monitor.py --continuous
 Restart=always
 RestartSec=300
+Environment=KP_MONITOR_CONFIG=/opt/kp-alert/config.yaml
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 Enable and start:
+
 ```bash
 sudo systemctl enable kp-monitor
 sudo systemctl start kp-monitor
+sudo systemctl status kp-monitor
 ```
 
 ## Testing and Verification
@@ -270,18 +395,26 @@ sudo systemctl start kp-monitor
 ### Initial Setup Testing
 
 1. **Test data fetching**:
+
    ```bash
-   python test_kp_fetch.py
+   python -m src.kp_fetch_test
    ```
 
 2. **Test email functionality**:
+
    ```bash
-   python kp_index_monitor.py --test
+   python -m src.kp_index_monitor --test
    ```
 
 3. **Run single monitoring check**:
+
    ```bash
-   python kp_index_monitor.py --once
+   python -m src.kp_index_monitor --once
+   ```
+
+4. **Validate configuration**:
+   ```bash
+   python -c "from src.config import MonitorConfig; config = MonitorConfig.from_yaml(); print('Configuration valid!')"
    ```
 
 ### Troubleshooting
@@ -289,73 +422,131 @@ sudo systemctl start kp-monitor
 #### Common Issues
 
 1. **Email sending fails**:
-   - Check SMTP settings and credentials
-   - For Gmail: Enable 2FA and use App Password
-   - Test with `--test` mode first
+
+   - Check if local mail system (postfix) is running: `sudo systemctl status postfix`
+   - Test mail system: `echo "Test" | mail -s "Test Subject" your-email@domain.com`
+   - Check mail logs: `sudo tail -f /var/log/mail.log`
 
 2. **Data fetch fails**:
+
    - Check internet connectivity
-   - Verify GFZ website is accessible
+   - Verify GFZ website is accessible: `curl -I https://spaceweather.gfz.de/`
    - Check logs for specific error messages
 
-3. **Permission errors on server**:
-   - Ensure proper file permissions
+3. **Configuration errors**:
+
+   - Validate YAML syntax: `python -c "import yaml; yaml.safe_load(open('config.yaml'))"`
+   - Check file permissions: `ls -la config.yaml`
+   - Verify email format in recipients list
+
+4. **Permission errors on server**:
+   - Ensure proper file permissions: `chmod 644 config.yaml`
    - Run as appropriate user
-   - Check mail system configuration
+   - Check systemd service user permissions
 
 #### Log Files
 
-Check `kp_monitor.log` for detailed information:
+Monitor system activity:
+
 ```bash
-tail -f kp_monitor.log
+# Watch real-time logs
+tail -f kp_index_monitor.log
+
+# Check for errors
+grep ERROR kp_index_monitor.log
+
+# View recent activity
+tail -50 kp_index_monitor.log
 ```
+
+### Configuration Validation
+
+The system automatically validates configuration on startup:
+
+- **Kp threshold**: Must be between 0-9
+- **Check interval**: Must be positive
+- **Email addresses**: Must be valid format
+- **Log file**: Must be accessible path
+
+Error messages will indicate specific validation failures.
 
 ## Security Considerations
 
-- **Never commit passwords** to version control
-- Use **app passwords** for Gmail (not account password)
-- Consider using **environment variables** for sensitive data
-- Restrict **file permissions** on configuration files (600 or 644)
-- Use **dedicated service accounts** for production deployment
+- **Configuration files**: Keep `config.yaml` secure with appropriate file permissions (644 or 600)
+- **Email security**: Uses local mail system to avoid storing external credentials
+- **Service accounts**: Use dedicated user accounts for production deployment
+- **Log management**: Monitor log files and implement log rotation
+- **Network security**: Firewall rules for production servers
+- **Environment variables**: Use `KP_MONITOR_CONFIG` for sensitive deployments
 
-## Gmail App Password Setup
+## Advanced Configuration
 
-1. Enable 2-Factor Authentication on your Google account
-2. Go to Google Account settings → Security → 2-Step Verification
-3. Scroll down to "App passwords"
-4. Generate an app password for "Mail"
-5. Use this 16-character password in your configuration
+### Multiple Alert Thresholds
+
+You can run multiple instances with different thresholds:
+
+```bash
+# High-priority alerts (severe storms only)
+KP_MONITOR_CONFIG=config_critical.yaml python -m src.kp_index_monitor --continuous
+
+# Research alerts (all activity)
+KP_MONITOR_CONFIG=config_research.yaml python -m src.kp_index_monitor --continuous
+```
 
 ## Development and Contribution
 
 ### Project Structure
+
 ```
-space_weather/
-├── kp_index_monitor.py    # Main monitoring application
-├── test_kp_fetch.py       # Data fetching test script
-├── config.py              # Configuration template
-├── requirements.txt       # Python dependencies
-├── README.md             # Documentation
-└── kp_index/             # Data directory
-    └── *.csv             # Downloaded forecast data
+kp_alert/
+├── src/
+│   ├── __init__.py           # Package initialization
+│   ├── config.py             # Configuration management with YAML support
+│   ├── kp_index_monitor.py   # Main monitoring application
+│   └── kp_fetch_test.py      # Data fetching test script
+├── config.yaml               # Main configuration file
+├── requirements.txt          # Python dependencies
+└── README.md                 # Documentation
 ```
 
+### Key Features
+
+- **YAML Configuration**: Type-safe configuration with validation
+- **Robust Error Handling**: Graceful handling of network and data issues
+- **Smart Alert Logic**: 6-hour cooldown to prevent alert spam
+- **Local SMTP**: No external credentials required
+
 ### Contributing
+
 - Follow PEP 8 style guidelines
-- Add appropriate docstrings and comments
+- Add appropriate NumPy-style docstrings and comments
 - Test changes with both single and continuous modes
 - Update documentation for new features
+- Validate configuration changes with the test suite
+
+### Testing Framework
+
+```bash
+# Run all tests
+python -m src.kp_fetch_test.py
+python -m src.kp_index_monitor --test
+python -m src.kp_index_monitor --once
+
+# Configuration validation
+python -c "from src.config import MonitorConfig; MonitorConfig.from_yaml().validate()"
+```
 
 ## License and Attribution
 
 This project is for educational and research purposes.
 
-**Data Attribution**: Space weather data provided by GFZ German Research Centre for Geosciences (https://spaceweather.gfz.de/).
+**Data Attribution**: Space weather data provided by GFZ Helmholtz Centre for Geosciences (https://spaceweather.gfz.de/).
 
 ## Support
 
 For issues and questions:
+
 1. Check the troubleshooting section
 2. Review log files for error details
 3. Verify configuration settings
-4. Test individual components using provided test scripts 
+4. Test individual components using provided test scripts
