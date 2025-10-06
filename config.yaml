@@ -1,0 +1,7 @@
+kp_alert_threshold: 2.0
+check_interval_hours: 0.01
+
+recipients: ["sahil.jhawar448@gmail.com"]
+
+log_file: "kp_index_monitor.log"
+log_level: "INFO"

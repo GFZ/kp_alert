@@ -6,54 +6,23 @@ A monitoring system that tracks the Kp geomagnetic index from GFZ Potsdam
 and sends automated email alerts when space weather conditions exceed specified thresholds.
 
 Data Source: GFZ German Research Centre for Geosciences
-URL: https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/
+URL: https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv
+
 """
 
+import argparse
 import logging
-import os
 import smtplib
 import time
 from datetime import datetime, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+from email.message import EmailMessage
+from io import StringIO
 from typing import Dict, Optional
 
 import pandas as pd
 import requests
 
-# Configuration setup
-try:
-    import config
-except ImportError:
-    config = None
-    print("Warning: config.py not found. Using default configuration.")
-    print("Please copy and edit config.py for your settings.")
-
-
-class Config:
-    """Configuration class containing all system settings"""
-
-    KP_CSV_URL = (
-        getattr(
-            config,
-            "KP_CSV_URL",
-            "https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv",
-        )
-        if config
-        else "https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv"
-    )
-    KP_ALERT_THRESHOLD = getattr(config, "KP_ALERT_THRESHOLD", 4.0) if config else 4.0
-    SMTP_SERVER = getattr(config, "SMTP_SERVER", "smtp.gmail.com") if config else "smtp.gmail.com"
-    SMTP_PORT = getattr(config, "SMTP_PORT", 587) if config else 587
-    EMAIL_USER = getattr(config, "EMAIL_USER", "your_email@gmail.com") if config else "your_email@gmail.com"
-    EMAIL_PASSWORD = getattr(config, "EMAIL_PASSWORD", "your_app_password") if config else "your_app_password"
-    ALERT_RECIPIENTS = (
-        getattr(config, "ALERT_RECIPIENTS", ["spaceweather@institution.edu"])
-        if config
-        else ["spaceweather@institution.edu"]
-    )
-    CHECK_INTERVAL_HOURS = getattr(config, "CHECK_INTERVAL_HOURS", 3) if config else 3
-    LOG_FILE = getattr(config, "LOG_FILE", "kp_monitor.log") if config else "kp_monitor.log"
+from src.config import KP_CSV_URL, MonitorConfig
 
 
 class KpMonitor:
@@ -64,17 +33,23 @@ class KpMonitor:
     for geomagnetic activity monitoring.
     """
 
-    def __init__(self):
-        self.setup_logging()
+    def __init__(self, config: MonitorConfig):
         self.last_alert_time = None
         self.last_max_kp = 0
+        self.config = config
+        self.setup_logging()
 
-    def setup_logging(self):
-        """Configure logging to file and console"""
+    def setup_logging(self) -> None:
+        """
+        Configure logging to file and console.
+
+        Sets up logging handlers for both file and console output with
+        appropriate formatting and log levels from configuration.
+        """
         logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(message)s",
-            handlers=[logging.FileHandler(Config.LOG_FILE), logging.StreamHandler()],
+            level=self.config.log_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            handlers=[logging.FileHandler(self.config.log_file), logging.StreamHandler()],
         )
         self.logger = logging.getLogger(__name__)
 
@@ -82,21 +57,16 @@ class KpMonitor:
         """
         Fetch current Kp index forecast data from GFZ website.
 
-        Returns:
+        Returns
+        -------
+        pd.DataFrame or None
             DataFrame containing forecast data or None if fetch fails
         """
         try:
-            self.logger.info(f"Fetching Kp data from {Config.KP_CSV_URL}")
-
-            # Add headers to mimic browser request
+            self.logger.info(f"Fetching Kp data from {KP_CSV_URL}")
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
-            response = requests.get(Config.KP_CSV_URL, headers=headers, timeout=30)
+            response = requests.get(KP_CSV_URL, headers=headers, timeout=30)
             response.raise_for_status()
-
-            # Read CSV data
-            from io import StringIO
-
             df = pd.read_csv(StringIO(response.text))
 
             self.logger.info(f"Successfully fetched {len(df)} records")
@@ -116,17 +86,28 @@ class KpMonitor:
         """
         Analyze Kp forecast data for alert conditions.
 
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame containing Kp forecast data from GFZ
 
-        Returns:
-            Dictionary containing analysis results
+        Returns
+        -------
+        Dict
+            Dictionary containing analysis results with keys:
+            - current_max_kp: Maximum Kp value in current forecast
+            - threshold_exceeded: Boolean indicating if threshold exceeded
+            - high_kp_records: Records above alert threshold
+            - next_24h_forecast: Forecast for next 24 hours
+            - alert_worthy: Boolean indicating if alert should be sent
         """
         try:
             # Get current maximum values
             max_values = df["maximum"].astype(float)
-            current_max = max_values.max()
+            current_max = max_values.iloc[0]
 
             # Find records above threshold
-            high_kp_records = df[df["maximum"].astype(float) > Config.KP_ALERT_THRESHOLD]
+            high_kp_records = df[df["maximum"].astype(float) > self.config.kp_alert_threshold]
 
             # Get upcoming forecast periods (next 24 hours)
             df["Time (UTC)"] = pd.to_datetime(df["Time (UTC)"], format="%d-%m-%Y %H:%M", dayfirst=True, utc=True)
@@ -135,7 +116,7 @@ class KpMonitor:
 
             analysis = {
                 "current_max_kp": current_max,
-                "threshold_exceeded": current_max > Config.KP_ALERT_THRESHOLD,
+                "threshold_exceeded": current_max > self.config.kp_alert_threshold,
                 "high_kp_records": high_kp_records,
                 "next_24h_forecast": next_24h,
                 "alert_worthy": len(high_kp_records) > 0,
@@ -152,11 +133,15 @@ class KpMonitor:
         """
         Create formatted alert message for high Kp conditions.
 
-        Args:
-            analysis: Dictionary containing analysis results
+        Parameters
+        ----------
+        analysis : Dict
+            Dictionary containing analysis results from analyze_kp_data
 
-        Returns:
-            Formatted alert message string
+        Returns
+        -------
+        str
+            Formatted HTML alert message string ready for email
         """
         max_kp = analysis["current_max_kp"]
         high_records = analysis["high_kp_records"]
@@ -167,7 +152,7 @@ class KpMonitor:
 <h3><strong>ALERT SUMMARY:</strong></h3>
 <ul>
 <li><strong>Current Maximum Kp Index:</strong> {max_kp:.2f}</li>
-<li><strong>Alert Threshold:</strong> {Config.KP_ALERT_THRESHOLD}</li>
+<li><strong>Alert Threshold:</strong> {self.config.kp_alert_threshold}</li>
             <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
 </ul>
 
@@ -190,23 +175,26 @@ class KpMonitor:
 </ul>
 
 
-<p><strong>DATA SOURCE:</strong> {Config.KP_CSV_URL}</p>
+<p><strong>DATA SOURCE:</strong> {KP_CSV_URL}</p>
 
 <p><em>This is an automated alert from the Kp Index Monitoring System.</em></p>
 </body></html>"""
 
         return message.strip()
 
-    def create_summary_message(self, df: pd.DataFrame, analysis: Dict) -> str:
+    def create_summary_message(self, analysis: Dict) -> str:
         """
         Create formatted summary message for current KP Index conditions.
 
-        Args:
-            df: DataFrame containing forecast data
-            analysis: Dictionary containing analysis results
+        Parameters
+        ----------
+        analysis : Dict
+            Dictionary containing analysis results from analyze_kp_data
 
-        Returns:
-            Formatted summary message string
+        Returns
+        -------
+        str
+            Formatted HTML summary message string ready for email
         """
         current_max = analysis["current_max_kp"]
         next_24h = analysis["next_24h_forecast"]
@@ -238,7 +226,7 @@ class KpMonitor:
 <ul>
             <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
 <li><strong>Current Maximum KP:</strong> {current_max:.2f}</li>
-<li><strong>Alert Threshold:</strong> {Config.KP_ALERT_THRESHOLD}</li>
+<li><strong>Alert Threshold:</strong> {self.config.kp_alert_threshold}</li>
 </ul>
 
 <h3><strong>NEXT 24 HOURS FORECAST:</strong></h3>
@@ -277,72 +265,36 @@ class KpMonitor:
 <li>Individual ensemble members (currently varies between 12-20 members)</li>
 </ul>
 
-<p><strong>DATA SOURCE:</strong> {Config.KP_CSV_URL}</p>
+<p><strong>DATA SOURCE:</strong> {KP_CSV_URL}</p>
 
 <p><em>This is an automated summary from the Kp Index Monitoring System using GFZ Space Weather Forecast.</em></p>
 </body></html>"""
 
         return message.strip()
 
-    def send_email_alert(self, subject: str, message: str) -> bool:
-        """
-        Send email alert using SMTP configuration.
-
-        Args:
-            subject: Email subject line
-            message: Email message content
-
-        Returns:
-            True if email sent successfully, False otherwise
-        """
-        try:
-            self.logger.info("Preparing to send email alert")
-
-            # Create message
-            msg = MIMEMultipart()
-            msg["From"] = Config.EMAIL_USER
-            msg["To"] = ", ".join(Config.ALERT_RECIPIENTS)
-            msg["Subject"] = subject
-
-            # Attach message body as HTML
-            msg.attach(MIMEText(message, "html"))
-
-            # Send email
-            with smtplib.SMTP(Config.SMTP_SERVER, Config.SMTP_PORT) as server:
-                server.starttls()
-                server.login(Config.EMAIL_USER, Config.EMAIL_PASSWORD)
-                server.send_message(msg)
-
-            self.logger.info(f"Alert email sent to {len(Config.ALERT_RECIPIENTS)} recipients")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Failed to send email: {e}")
-            return False
-        
-
-
-
-    def send_linux_mail(self, subject: str, message: str) -> bool:
+    def send_alert(self, subject: str, message: str) -> bool:
         """
         Send email using the system's configured SMTP (without calling `mail`).
 
-        Args:
-            subject: Email subject line
-            message: Email message content
+        Parameters
+        ----------
+        subject : str
+            Email subject line
+        message : str
+            Email message content (HTML formatted)
 
-        Returns:
+        Returns
+        -------
+        bool
             True if email sent successfully, False otherwise
         """
         try:
-            recipients = Config.ALERT_RECIPIENTS
-            import smtplib
-            from email.message import EmailMessage
+            recipients = self.config.recipients
 
             # Construct email
             msg = EmailMessage()
             msg["Subject"] = subject
-            msg["From"] = "pager"  # should be a valid sender on your server
+            msg["From"] = "pager"
             msg["To"] = ", ".join(recipients)
             msg.add_alternative(message, subtype="html")
 
@@ -350,34 +302,37 @@ class KpMonitor:
             with smtplib.SMTP("localhost") as smtp:
                 smtp.send_message(msg)
 
-            self.logger.info(f"Linux mail sent successfully to {len(recipients)} recipients")
+            self.logger.info(f"Mail sent successfully to {len(recipients)} recipients")
             return True
 
         except Exception as e:
             self.logger.error(f"Error sending mail: {e}")
             return False
 
-
     def should_send_alert(self, analysis: Dict) -> bool:
         """
         Determine if alert should be sent to avoid spam.
 
-        Args:
-            analysis: Dictionary containing analysis results
+        Parameters
+        ----------
+        analysis : Dict
+            Dictionary containing analysis results from analyze_kp_data
 
-        Returns:
+        Returns
+        -------
+        bool
             True if alert should be sent, False otherwise
         """
         if not analysis["alert_worthy"]:
             return False
 
         # Avoid sending multiple alerts for the same high Kp period
-        # current_time = pd.Timestamp.now(tz="UTC")
-        # if self.last_alert_time:
-        #     time_since_last_alert = (current_time - self.last_alert_time).total_seconds() / 3600
-        #     if time_since_last_alert < 6:  # Don't send alerts more than once every 6 hours
-        #         self.logger.info("Skipping alert - too soon since last alert")
-        #         return False
+        current_time = pd.Timestamp.now(tz="UTC")
+        if self.last_alert_time:
+            time_since_last_alert = (current_time - self.last_alert_time).total_seconds() / 3600
+            if time_since_last_alert < 6:  # Don't send alerts more than once every 6 hours
+                self.logger.info("Skipping alert - too soon since last alert")
+                return False
 
         return True
 
@@ -385,7 +340,11 @@ class KpMonitor:
         """
         Execute a single monitoring check cycle.
 
-        Returns:
+        Fetches Kp data, analyzes it, and sends alerts if necessary.
+
+        Returns
+        -------
+        bool
             True if check completed successfully, False otherwise
         """
         self.logger.info("=" * 50)
@@ -405,15 +364,7 @@ class KpMonitor:
             subject = f"SPACE WEATHER ALERT: High Kp Index ({max_kp:.1f}) Detected"
             message = self.create_alert_message(analysis)
 
-            # Try to send email (Gmail SMTP as default, Linux mail as fallback)
-            email_sent = False
-
-            # Try Gmail SMTP first
-            email_sent = False
-
-            # Fallback to Linux mail if SMTP fails
-            if not email_sent and os.name == "posix":  # Linux/Unix fallback
-                email_sent = self.send_linux_mail(subject, message)
+            email_sent = self.send_alert(subject, message)
 
             if email_sent:
                 self.last_alert_time = pd.Timestamp.now(tz="UTC")
@@ -423,18 +374,20 @@ class KpMonitor:
 
         return True
 
-    def send_summary_email(self, recipient: str) -> bool:
+    def send_summary_email(self) -> bool:
         """
-        Fetch current data and send summary email to specified recipient.
+        Fetch current data and send summary email to configured recipients.
 
-        Args:
-            recipient: Email address to send summary to
+        Generates and sends a comprehensive summary of current Kp conditions
+        and 24-hour forecast to all configured email recipients.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if email sent successfully, False otherwise
         """
-        self.logger.info("=" * 50)
-        self.logger.info(f"Generating Kp summary for {recipient}")
+        recipients = self.config.recipients
+        self.logger.info(f"Generating Kp summary for {recipients}")
 
         # Fetch data
         df = self.fetch_kp_data()
@@ -448,62 +401,46 @@ class KpMonitor:
         # Create summary message
         max_kp = analysis["current_max_kp"]
         subject = f"Space Weather Summary Report - Current Kp: {max_kp:.1f}"
-        message = self.create_summary_message(df, analysis)
+        message = self.create_summary_message(analysis)
 
-        # Send email to specific recipient
         try:
-            # Create message
-            msg = MIMEMultipart()
-            msg["From"] = Config.EMAIL_USER
-            msg["To"] = recipient
+            msg = EmailMessage()
+            msg["From"] = "pager"
+            msg["To"] = ", ".join(recipients)
             msg["Subject"] = subject
 
             # Attach message body as HTML
-            msg.attach(MIMEText(message, "html"))
+            msg.add_alternative(message, subtype="html")
 
-            # Send email
-            with smtplib.SMTP(Config.SMTP_SERVER, Config.SMTP_PORT) as server:
-                server.starttls()
-                server.login(Config.EMAIL_USER, Config.EMAIL_PASSWORD)
-                server.send_message(msg)
+            with smtplib.SMTP("localhost") as smtp:
+                smtp.send_message(msg)
 
-            self.logger.info(f"Summary email sent successfully to {recipient}")
+            self.logger.info(f"Summary email sent successfully to {', '.join(recipients)}")
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to send summary email: {e}")
+            self.logger.error(f"Error sending mail: {e}")
+            return False
 
-            # Try Linux mail as fallback
-            try:
-                import subprocess
+    def run_continuous_monitoring(self) -> None:
+        """
+        Run continuous monitoring with specified check intervals.
 
-                cmd = f'echo "{message}" | mail -s "{subject}" {recipient}'
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-
-                if result.returncode == 0:
-                    self.logger.info(f"Summary sent via Linux mail to {recipient}")
-                    return True
-                else:
-                    self.logger.error(f"Linux mail also failed: {result.stderr}")
-                    return False
-
-            except Exception as e2:
-                self.logger.error(f"Both email methods failed: {e2}")
-                return False
-
-    def run_continuous_monitoring(self):
-        """Run continuous monitoring with specified check intervals"""
+        Runs indefinitely, checking Kp data at configured intervals and
+        sending alerts when thresholds are exceeded. Can be stopped with
+        Ctrl+C (KeyboardInterrupt).
+        """
         self.logger.info("Starting continuous Kp index monitoring")
-        self.logger.info(f"Check interval: {Config.CHECK_INTERVAL_HOURS} hours")
-        self.logger.info(f"Alert threshold: {Config.KP_ALERT_THRESHOLD}")
+        self.logger.info(f"Check interval: {self.config.check_interval_hours} hours")
+        self.logger.info(f"Alert threshold: {self.config.kp_alert_threshold}")
 
         while True:
             try:
                 self.run_single_check()
 
                 # Wait for next check
-                sleep_seconds = Config.CHECK_INTERVAL_HOURS * 3600
-                self.logger.info(f"Waiting {Config.CHECK_INTERVAL_HOURS} hours until next check...")
+                sleep_seconds = self.config.check_interval_hours * 3600
+                self.logger.info(f"Waiting {self.config.check_interval_hours} hours until next check...")
                 time.sleep(sleep_seconds)
 
             except KeyboardInterrupt:
@@ -515,58 +452,42 @@ class KpMonitor:
 
 
 def main():
-    """Main function with command line interface"""
-    import argparse
+    """
+    Main function with command line interface.
+    """
 
     parser = argparse.ArgumentParser(description="Kp Index Space Weather Monitor")
-    parser.add_argument("--once", action="store_true", help="Run single check and exit")
-    parser.add_argument("--continuous", action="store_true", help="Run continuous monitoring")
-    parser.add_argument("--test", action="store_true", help="Test email functionality")
-    parser.add_argument("--summary", action="store_true", help="Send current Kp summary via email")
-    parser.add_argument("--email", type=str, help="Email address for summary (required with --summary)")
+    group = parser.add_mutually_exclusive_group(required=True)
+
+    group.add_argument("--once", action="store_true", help="Run single check and exit")
+    group.add_argument("--continuous", action="store_true", help="Run continuous monitoring")
+    group.add_argument("--test", action="store_true", help="Test email functionality")
+    group.add_argument("--summary", action="store_true", help="Send current Kp summary via email")
 
     args = parser.parse_args()
 
-    monitor = KpMonitor()
+    config = MonitorConfig.from_yaml()
+
+    monitor = KpMonitor(config)
 
     if args.test:
-        # Test email functionality
         subject = "Kp Monitor Test Email"
         message = "This is a test email from the Kp Index Monitoring System."
 
-        print("Testing email functionality...")
-        # Try Gmail SMTP first, then Linux mail as fallback
-        success = False
-        if not success and os.name == "posix":
-            success = monitor.send_linux_mail(subject, message)
-
-        print("Email test:", "SUCCESS" if success else "FAILED")
+        logging.info("Testing email functionality...")
+        success = monitor.send_alert(subject, message)
+        logging.info(f"Summary email: {'SUCCESS' if success else 'FAILED'}")
 
     elif args.summary:
-        # Send summary email
-        if not args.email:
-            print("Error: --email argument is required when using --summary")
-            print("Example: python kp_index_monitor.py --summary --email scientist@university.edu")
-            return
-
-        print(f"Sending Kp summary to {args.email}...")
-        success = monitor.send_summary_email(args.email)
-        print("Summary email:", "SUCCESS" if success else "FAILED")
+        logging.info(f"Sending Kp summary to {args.email}...")
+        success = monitor.send_summary_email()
+        logging.info(f"Summary email: {'SUCCESS' if success else 'FAILED'}")
 
     elif args.once:
-        # Single check
         monitor.run_single_check()
 
     elif args.continuous:
-        # Continuous monitoring
         monitor.run_continuous_monitoring()
-
-    else:
-        print("Usage: python kp_index_monitor.py [--once|--continuous|--test|--summary]")
-        print("  --once                    : Run single check")
-        print("  --continuous              : Run continuous monitoring")
-        print("  --test                    : Test email functionality")
-        print("  --summary --email <addr>  : Send current Kp summary to specified email")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,17 @@ import requests
 
 
 def test_kp_data_fetch():
-    """Test fetching and parsing Kp data from GFZ website"""
+    """
+    Test fetching and parsing Kp data from GFZ website.
+    
+    Downloads Kp forecast data from the GFZ CSV endpoint and performs
+    basic validation and analysis of the data format.
+    
+    Returns
+    -------
+    bool
+        True if test passed successfully, False otherwise
+    """
 
     url = "https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv"
 
@@ -83,7 +93,17 @@ def test_kp_data_fetch():
 
 
 def test_local_csv():
-    """Test reading local CSV file if available"""
+    """
+    Test reading local CSV file if available.
+    
+    Attempts to read a local CSV file for testing purposes if it exists.
+    This is optional functionality for offline testing.
+    
+    Returns
+    -------
+    bool
+        True if local CSV was read successfully, False if file not found or error
+    """
 
     local_file = "kp_index/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv"
 
@@ -113,7 +133,12 @@ def test_local_csv():
 
 
 def display_data_format_info():
-    """Display information about the expected data format"""
+    """
+    Display information about the expected data format.
+    
+    Prints detailed information about the structure and contents of the
+    GFZ Kp forecast CSV file format to help users understand the data.
+    """
     print("\nData Format Information:")
     print("=" * 60)
     print("The CSV file contains the following columns:")
