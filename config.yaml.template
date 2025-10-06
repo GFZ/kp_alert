@@ -3,5 +3,5 @@ check_interval_hours: 1
 
 recipients: [email1@email.com, email2@email.com]
 
-log_file: "kp_index_monitor.log"
+log_folder: "./kp_index_monitor"
 log_level: "INFO"

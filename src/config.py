@@ -33,8 +33,8 @@ class MonitorConfig:
         Hours between monitoring checks (must be positive)
     recipients : List[str]
         Email addresses to receive alerts
-    log_file : str
-        Path to log file for monitoring output
+    log_folder : str
+        Path to log folder for monitoring output
     log_level : str, default="INFO"
         Logging level (DEBUG, INFO, WARNING, ERROR)
     """
@@ -46,7 +46,7 @@ class MonitorConfig:
     recipients: List[str]
 
     # Logging configuration
-    log_file: str
+    log_folder: str
     log_level: str = "INFO"
 
     @staticmethod
@@ -128,8 +128,8 @@ class MonitorConfig:
                 errors.append(f"Invalid email address: {email}")
 
         # Validate log file path
-        if not self.log_file:
-            errors.append("log_file cannot be empty")
+        if not self.log_folder:
+            errors.append("log_folder cannot be empty")
 
         if errors:
             raise ValueError("Configuration validation failed:\n" + "\n".join(f"  - {error}" for error in errors))
