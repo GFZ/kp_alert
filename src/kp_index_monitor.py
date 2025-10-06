@@ -22,6 +22,7 @@ from typing import Optional
 
 import pandas as pd
 import requests
+from pathlib import Path
 
 from src.config import KP_CSV_URL, MonitorConfig
 
@@ -50,6 +51,8 @@ class KpMonitor:
         self.last_alert_time = None
         self.last_max_kp = 0
         self.config = config
+        self.log_folder = Path(self.config.log_folder)
+        self.log_folder.mkdir(parents=True, exist_ok=True)
         self.setup_logging()
 
     def setup_logging(self) -> None:
@@ -62,7 +65,12 @@ class KpMonitor:
         logging.basicConfig(
             level=self.config.log_level,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            handlers=[logging.FileHandler(self.config.log_file), logging.StreamHandler()],
+            handlers=[
+                logging.FileHandler(
+                    self.log_folder / f"kp_monitor_{datetime.now(timezone.utc).strftime('%Y%d%mT%H%M00')}.log"
+                ),
+                logging.StreamHandler(),
+            ],
         )
         self.logger = logging.getLogger(__name__)
 
@@ -117,15 +125,16 @@ class KpMonitor:
         try:
             # Get current maximum values
             max_values = df["maximum"].astype(float)
-            current_max = max_values.iloc[0]
+            current_max = max_values.max()
 
-            # Find records above threshold
-            high_kp_records = df[df["maximum"].astype(float) > self.config.kp_alert_threshold]
-
-            # Get upcoming forecast periods (next 24 hours)
             df["Time (UTC)"] = pd.to_datetime(df["Time (UTC)"], format="%d-%m-%Y %H:%M", dayfirst=True, utc=True)
-            now = pd.Timestamp.now(tz="UTC")
-            next_24h = df[df["Time (UTC)"] >= now].head(8)  # Next 8 periods (24 hours)
+            df["Time (UTC)"] = df["Time (UTC)"].dt.tz_convert("UTC")
+
+            high_kp_records = df[df["maximum"].astype(float) >= self.config.kp_alert_threshold].copy()
+            next_24h = df[df["Time (UTC)"] >= pd.Timestamp.now(tz="UTC")].head(8).copy()
+
+            high_kp_records["Time (UTC)"] = pd.to_datetime(high_kp_records["Time (UTC)"], utc=True)
+            next_24h["Time (UTC)"] = pd.to_datetime(next_24h["Time (UTC)"], utc=True)
 
             analysis = AnalysisResults(
                 current_max_kp=current_max,
@@ -135,7 +144,9 @@ class KpMonitor:
                 alert_worthy=len(high_kp_records) > 0,
             )
 
-            self.logger.info(f"Analysis complete - Max Kp: {current_max:.2f}, Alert: {analysis['alert_worthy']}")
+            self.logger.info(
+                f"Analysis complete - Current Kp: {current_max:.2f}, Alert: {analysis['alert_worthy']}, Threshold: {self.config.kp_alert_threshold}"
+            )
             return analysis
 
         except Exception as e:
@@ -164,7 +175,7 @@ class KpMonitor:
 
 <h3><strong>ALERT SUMMARY:</strong></h3>
 <ul>
-<li><strong>Current Maximum Kp Index:</strong> {max_kp:.2f}</li>
+<li><strong>3-day Maximum Kp:</strong> {max_kp:.2f}</li>
 <li><strong>Alert Threshold:</strong> {self.config.kp_alert_threshold}</li>
             <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
 </ul>
@@ -173,27 +184,58 @@ class KpMonitor:
 <ul>
 """
 
-        for _, record in high_records.iterrows():
-            message += f"<li><strong>{record['Time (UTC)']} UTC:</strong> Kp = {record['maximum']:.2f}</li>\n"
-
+        message += self._kp_html_table(high_records)
+        message += "</tbody></table>\n"
         message += f"""</ul>
 
-<h3><strong>GEOMAGNETIC STORM LEVELS:</strong></h3>
-<ul>
-<li><strong>Kp 5:</strong> Minor geomagnetic storm (G1)</li>
-<li><strong>Kp 6:</strong> Moderate geomagnetic storm (G2)</li>
-<li><strong>Kp 7:</strong> Strong geomagnetic storm (G3)</li>
-<li><strong>Kp 8:</strong> Severe geomagnetic storm (G4)</li>
-<li><strong>Kp 9:</strong> Extreme geomagnetic storm (G5)</li>
-</ul>
+            <h3><strong>GEOMAGNETIC STORM LEVELS:</strong></h3>
+            <ul>
+            <li><strong>Kp 5:</strong> Minor geomagnetic storm (G1)</li>
+            <li><strong>Kp 6:</strong> Moderate geomagnetic storm (G2)</li>
+            <li><strong>Kp 7:</strong> Strong geomagnetic storm (G3)</li>
+            <li><strong>Kp 8:</strong> Severe geomagnetic storm (G4)</li>
+            <li><strong>Kp 9:</strong> Extreme geomagnetic storm (G5)</li>
+            </ul>
 
 
-<p><strong>DATA SOURCE:</strong> {KP_CSV_URL}</p>
+            <p><strong>DATA SOURCE:</strong> <a href='{KP_CSV_URL}'> {KP_CSV_URL}</a></p>
 
-<p><em>This is an automated alert from the Kp Index Monitoring System.</em></p>
-</body></html>"""
+            <p><em>This is an automated alert from the Kp Index Monitoring System.</em></p>
+            </body></html>"""
 
         return message.strip()
+
+    def _kp_html_table(self, series) -> str:
+        prev_message = ""
+        prev_message += '<table style="border-collapse: collapse; margin: 5px 0; font-size: 16px;">\n'
+        prev_message += '<thead><tr style="background-color: #f0f0f0;">'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; width: 120px; white-space: nowrap;">Time (UTC)</th>'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Max Kp Index</th>'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Status</th>'
+        prev_message += "</tr></thead>\n<tbody>\n"
+
+        for _, record in series.iterrows():
+            kp_val = float(record["maximum"])
+            if kp_val >= 6:
+                indicator = "ALERT"
+                color = "#ff0000"
+            elif kp_val >= 5:
+                indicator = "ALERT"
+                color = "#d9534f"
+            elif kp_val >= 4:
+                indicator = "ACTIVE"
+                color = "#f0ad4e"
+            else:
+                indicator = "QUIET"
+                color = "#5cb85c"
+
+            prev_message += f"<tr>"
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{record["Time (UTC)"]} UTC</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_val:.2f}</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {color}; white-space: nowrap;">{indicator}</td>'
+            prev_message += "</tr>\n"
+
+        return prev_message
 
     def create_summary_message(self, analysis: AnalysisResults) -> str:
         """
@@ -231,57 +273,50 @@ class KpMonitor:
         else:
             status = "QUIET CONDITIONS"
             level = "[QUIET]"
-
         message = f"""<html><body>
-<h2><strong>SPACE WEATHER - Kp Index SUMMARY REPORT</strong></h2>
+        <h2><strong>SPACE WEATHER - Kp Index SUMMARY REPORT</strong></h2>
 
-<h3><strong>CURRENT STATUS:</strong> {status} {level}</h3>
-<ul>
-            <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
-<li><strong>Current Maximum Kp:</strong> {current_max:.2f}</li>
-<li><strong>Alert Threshold:</strong> {self.config.kp_alert_threshold}</li>
-</ul>
+        <h3><strong>CURRENT STATUS:</strong> {status} {level}</h3>
+        <ul>
+                    <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
+        <li><strong>3-day Maximum Kp:</strong> {current_max:.2f}</li>
+        </ul>
 
-<h3><strong>NEXT 24 HOURS FORECAST:</strong></h3>
-<ul>
-"""
+        <h3><strong>NEXT 24 HOURS FORECAST:</strong></h3>
+        <ul>
+        """
 
-        for _, record in next_24h.iterrows():
-            kp_val = float(record["maximum"])
-            if kp_val >= 5:
-                indicator = "(ALERT)"
-            elif kp_val >= 4:
-                indicator = "(ACTIVE)"
-            else:
-                indicator = "(QUIET)"
-            message += f"<li><strong>{record['Time (UTC)']} UTC:</strong> Kp = {kp_val:.2f} {indicator}</li>\n"
+        message += self._kp_html_table(next_24h)
+
+        message += "</tbody></table>\n"
+
         # Add interpretation guide
-        message += f"""</ul>
+        message += f"""
+        </ul>
+        <h3><strong>GEOMAGNETIC ACTIVITY SCALE:</strong></h3>
+        <ul>
+        <li><strong>Kp 0-2:</strong> Quiet conditions</li>
+        <li><strong>Kp 3-4:</strong> Unsettled to Active conditions</li>
+        <li><strong>Kp 5:</strong> Minor Storm (G1) - Weak power grid fluctuations</li>
+        <li><strong>Kp 6:</strong> Moderate Storm (G2) - High-latitude power systems affected</li>
+        <li><strong>Kp 7:</strong> Strong Storm (G3) - Power systems may experience voltage corrections</li>
+        <li><strong>Kp 8:</strong> Severe Storm (G4) - Possible widespread voltage control problems</li>
+        <li><strong>Kp 9:</strong> Extreme Storm (G5) - Widespread power system voltage control problems</li>
+        </ul>
 
-<h3><strong>GEOMAGNETIC ACTIVITY SCALE:</strong></h3>
-<ul>
-<li><strong>Kp 0-2:</strong> Quiet conditions</li>
-<li><strong>Kp 3-4:</strong> Unsettled to Active conditions</li>
-<li><strong>Kp 5:</strong> Minor Storm (G1) - Weak power grid fluctuations</li>
-<li><strong>Kp 6:</strong> Moderate Storm (G2) - High-latitude power systems affected</li>
-<li><strong>Kp 7:</strong> Strong Storm (G3) - Power systems may experience voltage corrections</li>
-<li><strong>Kp 8:</strong> Severe Storm (G4) - Possible widespread voltage control problems</li>
-<li><strong>Kp 9:</strong> Extreme Storm (G5) - Widespread power system voltage control problems</li>
-</ul>
+        <h3><strong>FORECAST DATA SUMMARY:</strong></h3>
+        <p>The latest ensemble predictions contain the following information:</p>
+        <ul>
+        <li>Time in UTC format: dd-mm-yyyy HH:MM</li>
+        <li>Minimum, 0.25-quantile, median, 0.75-quantile, maximum forecasted values</li>
+        <li>Probability ranges for different Kp levels</li>
+        <li>Individual ensemble members (currently varies between 12-20 members)</li>
+        </ul>
 
-<h3><strong>FORECAST DATA SUMMARY:</strong></h3>
-<p>The latest ensemble predictions contain the following information:</p>
-<ul>
-<li>Time in UTC format: dd-mm-yyyy HH:MM</li>
-<li>Minimum, 0.25-quantile, median, 0.75-quantile, maximum forecasted values</li>
-<li>Probability ranges for different Kp levels</li>
-<li>Individual ensemble members (currently varies between 12-20 members)</li>
-</ul>
+        <p><strong>DATA SOURCE:</strong>  <a href='{KP_CSV_URL}'> {KP_CSV_URL}</a></p>
 
-<p><strong>DATA SOURCE:</strong> {KP_CSV_URL}</p>
-
-<p><em>This is an automated summary from the Kp Index Monitoring System using GFZ Space Weather Forecast.</em></p>
-</body></html>"""
+        <p><em>This is an automated summary from the Kp Index Monitoring System using GFZ Space Weather Forecast.</em></p>
+        </body></html>"""
 
         return message.strip()
 
@@ -308,7 +343,10 @@ class KpMonitor:
             msg = EmailMessage()
             msg["Subject"] = subject
             msg["From"] = "pager"
-            msg["Bcc"] = ", ".join(recipients)
+            if len(recipients) == 1:
+                msg["To"] = recipients[0]
+            else:
+                msg["Bcc"] = ", ".join(recipients)
             msg.add_alternative(message, subtype="html")
 
             # Connect to local MTA (usually localhost:25)
@@ -338,16 +376,17 @@ class KpMonitor:
         """
         if not analysis["alert_worthy"]:
             return False
-
-        # Avoid sending multiple alerts for the same high Kp period
-        current_time = pd.Timestamp.now(tz="UTC")
-        if self.last_alert_time:
-            time_since_last_alert = (current_time - self.last_alert_time).total_seconds() / 3600
-            if time_since_last_alert < 6:  # Don't send alerts more than once every 6 hours
-                self.logger.info("Skipping alert - too soon since last alert")
-                return False
-
         return True
+
+        # # Avoid sending multiple alerts for the same high Kp period
+        # current_time = pd.Timestamp.now(tz="UTC")
+        # if self.last_alert_time:
+        #     time_since_last_alert = (current_time - self.last_alert_time).total_seconds() / 3600
+        #     if time_since_last_alert < 6:  # Don't send alerts more than once every 6 hours
+        #         self.logger.info("Skipping alert - too soon since last alert")
+        #         return False
+
+        # return True
 
     def run_single_check(self) -> bool:
         """
@@ -374,7 +413,7 @@ class KpMonitor:
         # Check if alert should be sent
         if self.should_send_alert(analysis):
             max_kp = analysis["current_max_kp"]
-            subject = f"SPACE WEATHER ALERT: Threshold Kp Index ({max_kp:.1f}) Detected"
+            subject = f"SPACE WEATHER ALERT: Threshold Kp Index ({self.config.kp_alert_threshold:.1f}) Detected"
             message = self.create_alert_message(analysis)
 
             email_sent = self.send_alert(subject, message)
@@ -383,7 +422,9 @@ class KpMonitor:
                 self.last_alert_time = pd.Timestamp.now(tz="UTC")
                 self.last_max_kp = max_kp
         else:
-            self.logger.info(f"No alert needed - Max Kp: {analysis['current_max_kp']:.2f}")
+            self.logger.info(
+                f"No alert needed - Current Kp: {analysis['current_max_kp']:.2f}, Threshold: {self.config.kp_alert_threshold}"
+            )
 
         return True
 
@@ -400,7 +441,7 @@ class KpMonitor:
             True if email sent successfully, False otherwise
         """
         recipients = self.config.recipients
-        self.logger.info(f"Generating Kp summary for {recipients}")
+        self.logger.info("Generating Kp summary")
 
         # Fetch data
         df = self.fetch_kp_data()
@@ -419,7 +460,10 @@ class KpMonitor:
         try:
             msg = EmailMessage()
             msg["From"] = "pager"
-            msg["Bcc"] = ", ".join(recipients)
+            if len(recipients) == 1:
+                msg["To"] = recipients[0]
+            else:
+                msg["Bcc"] = ", ".join(recipients)
             msg["Subject"] = subject
 
             # Attach message body as HTML
@@ -428,7 +472,7 @@ class KpMonitor:
             with smtplib.SMTP("localhost") as smtp:
                 smtp.send_message(msg)
 
-            self.logger.info(f"Summary email sent successfully to {', '.join(recipients)}")
+            self.logger.info(f"Summary mail sent successfully to {len(recipients)} recipients")
             return True
 
         except Exception as e:
@@ -463,6 +507,32 @@ class KpMonitor:
                 self.logger.error(f"Error in monitoring loop: {e}", exc_info=True)
                 time.sleep(300)  # Wait 5 minutes before retrying
 
+    def run_continuous_summary(self) -> None:
+        """
+        Run continuous summary email sending at specified intervals.
+
+        Sends summary emails at configured intervals indefinitely.
+        Can be stopped with Ctrl+C (KeyboardInterrupt).
+        """
+        self.logger.info("Starting continuous Kp index summary emailing")
+        self.logger.info(f"Summary interval: {self.config.check_interval_hours} hours")
+
+        while True:
+            try:
+                self.send_summary_email()
+
+                # Wait for next summary
+                sleep_seconds = self.config.check_interval_hours * 3600
+                self.logger.info(f"Waiting {self.config.check_interval_hours} hours until next summary...")
+                time.sleep(sleep_seconds)
+
+            except KeyboardInterrupt:
+                self.logger.info("Summary emailing stopped by user")
+                break
+            except Exception as e:
+                self.logger.error(f"Error in summary emailing loop: {e}", exc_info=True)
+                time.sleep(300)  # Wait 5 minutes before retrying
+
 
 def main():
     """
@@ -475,12 +545,12 @@ def main():
     group.add_argument("--once", action="store_true", help="Run single check and exit")
     group.add_argument("--continuous", action="store_true", help="Run continuous monitoring")
     group.add_argument("--test", action="store_true", help="Test email functionality")
-    group.add_argument("--summary", action="store_true", help="Send current Kp summary via email")
+
+    parser.add_argument("--summary", action="store_true", help="Send summary email (works with --continuous)")
 
     args = parser.parse_args()
 
     config = MonitorConfig.from_yaml()
-
     monitor = KpMonitor(config)
 
     if args.test:
@@ -491,15 +561,17 @@ def main():
         success = monitor.send_alert(subject, message)
         logging.info(f"Summary email: {'SUCCESS' if success else 'FAILED'}")
 
-    elif args.summary:
-        success = monitor.send_summary_email()
-        logging.info(f"Summary email: {'SUCCESS' if success else 'FAILED'}")
-
     elif args.once:
-        monitor.run_single_check()
+        if args.summary:
+            monitor.send_summary_email()
+        else:
+            monitor.run_single_check()
 
     elif args.continuous:
-        monitor.run_continuous_monitoring()
+        if args.summary:
+            monitor.run_continuous_summary()
+        else:
+            monitor.run_continuous_monitoring()
 
 
 if __name__ == "__main__":
