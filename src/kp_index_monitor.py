@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from io import StringIO
-from typing import Dict, Optional
+from typing import Optional
 
 import pandas as pd
 import requests
@@ -142,14 +142,14 @@ class KpMonitor:
             self.logger.error(f"Error analyzing data: {e}", exc_info=True)
             return {"alert_worthy": False, "current_max_kp": 0}
 
-    def create_alert_message(self, analysis: Dict) -> str:
+    def create_alert_message(self, analysis: AnalysisResults) -> str:
         """
         Create formatted alert message for high Kp conditions.
 
         Parameters
         ----------
-        analysis : Dict
-            Dictionary containing analysis results from analyze_kp_data
+        analysis : AnalysisResults
+            AnalysisResults containing analysis results from analyze_kp_data
 
         Returns
         -------
@@ -195,14 +195,14 @@ class KpMonitor:
 
         return message.strip()
 
-    def create_summary_message(self, analysis: Dict) -> str:
+    def create_summary_message(self, analysis: AnalysisResults) -> str:
         """
         Create formatted summary message for current Kp Index conditions.
 
         Parameters
         ----------
-        analysis : Dict
-            Dictionary containing analysis results from analyze_kp_data
+        analysis : AnalysisResults
+            AnalysisResults containing analysis results from analyze_kp_data
 
         Returns
         -------
