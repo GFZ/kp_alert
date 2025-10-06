@@ -14,6 +14,7 @@ import argparse
 import logging
 import smtplib
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from io import StringIO
@@ -23,6 +24,18 @@ import pandas as pd
 import requests
 
 from src.config import KP_CSV_URL, MonitorConfig
+
+
+@dataclass
+class AnalysisResults:
+    current_max_kp: float
+    threshold_exceeded: bool
+    high_kp_records: pd.DataFrame
+    next_24h_forecast: pd.DataFrame
+    alert_worthy: bool
+
+    def __getitem__(self, key):
+        return getattr(self, key)
 
 
 class KpMonitor:
@@ -73,16 +86,16 @@ class KpMonitor:
             return df
 
         except requests.RequestException as e:
-            self.logger.error(f"Error fetching data: {e}")
+            self.logger.error(f"Error fetching data: {e}", exc_info=True)
             return None
         except pd.errors.EmptyDataError:
             self.logger.error("Received empty CSV file")
             return None
         except Exception as e:
-            self.logger.error(f"Unexpected error: {e}")
+            self.logger.error(f"Unexpected error: {e}", exc_info=True)
             return None
 
-    def analyze_kp_data(self, df: pd.DataFrame) -> Dict:
+    def analyze_kp_data(self, df: pd.DataFrame) -> AnalysisResults:
         """
         Analyze Kp forecast data for alert conditions.
 
@@ -93,8 +106,8 @@ class KpMonitor:
 
         Returns
         -------
-        Dict
-            Dictionary containing analysis results with keys:
+        AnalysisResults
+            AnalysisResults containing analysis results with keys:
             - current_max_kp: Maximum Kp value in current forecast
             - threshold_exceeded: Boolean indicating if threshold exceeded
             - high_kp_records: Records above alert threshold
@@ -114,19 +127,19 @@ class KpMonitor:
             now = pd.Timestamp.now(tz="UTC")
             next_24h = df[df["Time (UTC)"] >= now].head(8)  # Next 8 periods (24 hours)
 
-            analysis = {
-                "current_max_kp": current_max,
-                "threshold_exceeded": current_max > self.config.kp_alert_threshold,
-                "high_kp_records": high_kp_records,
-                "next_24h_forecast": next_24h,
-                "alert_worthy": len(high_kp_records) > 0,
-            }
+            analysis = AnalysisResults(
+                current_max_kp=current_max,
+                threshold_exceeded=current_max > self.config.kp_alert_threshold,
+                high_kp_records=high_kp_records,
+                next_24h_forecast=next_24h,
+                alert_worthy=len(high_kp_records) > 0,
+            )
 
             self.logger.info(f"Analysis complete - Max Kp: {current_max:.2f}, Alert: {analysis['alert_worthy']}")
             return analysis
 
         except Exception as e:
-            self.logger.error(f"Error analyzing data: {e}")
+            self.logger.error(f"Error analyzing data: {e}", exc_info=True)
             return {"alert_worthy": False, "current_max_kp": 0}
 
     def create_alert_message(self, analysis: Dict) -> str:
@@ -147,7 +160,7 @@ class KpMonitor:
         high_records = analysis["high_kp_records"]
 
         message = f"""<html><body>
-<h2><strong>SPACE WEATHER ALERT - High Kp Index Detected</strong></h2>
+<h2><strong>SPACE WEATHER ALERT - Threshold Kp Index Detected</strong></h2>
 
 <h3><strong>ALERT SUMMARY:</strong></h3>
 <ul>
@@ -156,7 +169,7 @@ class KpMonitor:
             <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
 </ul>
 
-<h3><strong>HIGH KP INDEX PERIODS DETECTED:</strong></h3>
+<h3><strong>HIGH Kp INDEX PERIODS DETECTED:</strong></h3>
 <ul>
 """
 
@@ -184,7 +197,7 @@ class KpMonitor:
 
     def create_summary_message(self, analysis: Dict) -> str:
         """
-        Create formatted summary message for current KP Index conditions.
+        Create formatted summary message for current Kp Index conditions.
 
         Parameters
         ----------
@@ -220,12 +233,12 @@ class KpMonitor:
             level = "[QUIET]"
 
         message = f"""<html><body>
-<h2><strong>SPACE WEATHER - KP Index SUMMARY REPORT</strong></h2>
+<h2><strong>SPACE WEATHER - Kp Index SUMMARY REPORT</strong></h2>
 
 <h3><strong>CURRENT STATUS:</strong> {status} {level}</h3>
 <ul>
             <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
-<li><strong>Current Maximum KP:</strong> {current_max:.2f}</li>
+<li><strong>Current Maximum Kp:</strong> {current_max:.2f}</li>
 <li><strong>Alert Threshold:</strong> {self.config.kp_alert_threshold}</li>
 </ul>
 
@@ -306,17 +319,17 @@ class KpMonitor:
             return True
 
         except Exception as e:
-            self.logger.error(f"Error sending mail: {e}")
+            self.logger.error(f"Error sending mail: {e}", exc_info=True)
             return False
 
-    def should_send_alert(self, analysis: Dict) -> bool:
+    def should_send_alert(self, analysis: AnalysisResults) -> bool:
         """
         Determine if alert should be sent to avoid spam.
 
         Parameters
         ----------
-        analysis : Dict
-            Dictionary containing analysis results from analyze_kp_data
+        analysis : AnalysisResults
+            AnalysisResults containing analysis results from analyze_kp_data
 
         Returns
         -------
@@ -361,7 +374,7 @@ class KpMonitor:
         # Check if alert should be sent
         if self.should_send_alert(analysis):
             max_kp = analysis["current_max_kp"]
-            subject = f"SPACE WEATHER ALERT: High Kp Index ({max_kp:.1f}) Detected"
+            subject = f"SPACE WEATHER ALERT: Threshold Kp Index ({max_kp:.1f}) Detected"
             message = self.create_alert_message(analysis)
 
             email_sent = self.send_alert(subject, message)
@@ -419,7 +432,7 @@ class KpMonitor:
             return True
 
         except Exception as e:
-            self.logger.error(f"Error sending mail: {e}")
+            self.logger.error(f"Error sending mail: {e}", exc_info=True)
             return False
 
     def run_continuous_monitoring(self) -> None:
@@ -447,7 +460,7 @@ class KpMonitor:
                 self.logger.info("Monitoring stopped by user")
                 break
             except Exception as e:
-                self.logger.error(f"Error in monitoring loop: {e}")
+                self.logger.error(f"Error in monitoring loop: {e}", exc_info=True)
                 time.sleep(300)  # Wait 5 minutes before retrying
 
 
