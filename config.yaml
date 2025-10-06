@@ -1,7 +1,0 @@
-kp_alert_threshold: 4.0
-check_interval_hours: 1
-
-recipients: [jhawar@gfz.de]
-
-log_file: "kp_index_monitor.log"
-log_level: "INFO"
