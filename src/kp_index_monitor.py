@@ -479,7 +479,6 @@ def main():
         logging.info(f"Summary email: {'SUCCESS' if success else 'FAILED'}")
 
     elif args.summary:
-        logging.info(f"Sending Kp summary to {args.email}...")
         success = monitor.send_summary_email()
         logging.info(f"Summary email: {'SUCCESS' if success else 'FAILED'}")
 

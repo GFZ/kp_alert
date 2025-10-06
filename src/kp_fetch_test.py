@@ -17,10 +17,10 @@ import requests
 def test_kp_data_fetch():
     """
     Test fetching and parsing Kp data from GFZ website.
-    
+
     Downloads Kp forecast data from the GFZ CSV endpoint and performs
     basic validation and analysis of the data format.
-    
+
     Returns
     -------
     bool
@@ -95,10 +95,10 @@ def test_kp_data_fetch():
 def test_local_csv():
     """
     Test reading local CSV file if available.
-    
+
     Attempts to read a local CSV file for testing purposes if it exists.
     This is optional functionality for offline testing.
-    
+
     Returns
     -------
     bool
@@ -135,7 +135,7 @@ def test_local_csv():
 def display_data_format_info():
     """
     Display information about the expected data format.
-    
+
     Prints detailed information about the structure and contents of the
     GFZ Kp forecast CSV file format to help users understand the data.
     """
