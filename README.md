@@ -22,7 +22,9 @@ pip install -r requirements.txt
 
 ### 2. Configure Settings
 
-Edit `config.yaml` to customize your monitoring setup:
+Copy `config.yaml.template ` to customize your monitoring setup:
+
+`cp config.yaml.template config.yaml`
 
 ```yaml
 # Alert settings
