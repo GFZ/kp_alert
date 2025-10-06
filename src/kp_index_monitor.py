@@ -295,7 +295,7 @@ class KpMonitor:
             msg = EmailMessage()
             msg["Subject"] = subject
             msg["From"] = "pager"
-            msg["To"] = ", ".join(recipients)
+            msg["Bcc"] = ", ".join(recipients)
             msg.add_alternative(message, subtype="html")
 
             # Connect to local MTA (usually localhost:25)
@@ -406,7 +406,7 @@ class KpMonitor:
         try:
             msg = EmailMessage()
             msg["From"] = "pager"
-            msg["To"] = ", ".join(recipients)
+            msg["Bcc"] = ", ".join(recipients)
             msg["Subject"] = subject
 
             # Attach message body as HTML
