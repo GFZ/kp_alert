@@ -138,6 +138,7 @@ class KpMonitor:
             df["Time (UTC)"] = df["Time (UTC)"].dt.tz_convert("UTC")
 
             high_kp_records = df[df["maximum"].astype(float) >= self.config.kp_alert_threshold].copy()
+            high_kp_records = high_kp_records[high_kp_records["Time (UTC)"] >= pd.Timestamp.now(tz="UTC")].copy()
             next_24h = df[df["Time (UTC)"] >= pd.Timestamp.now(tz="UTC")].head(8).copy()
 
             high_kp_records["Time (UTC)"] = pd.to_datetime(high_kp_records["Time (UTC)"], utc=True)
@@ -193,12 +194,22 @@ class KpMonitor:
                     </ul>
                     <h3><strong>HIGH Kp INDEX PERIODS Predicted (Kp >= {self.config.kp_alert_threshold})</strong></h3>
                     <ul>
-"""
+                    """
 
         message += self._kp_html_table(high_records, probability_df)
         message += "</tbody></table>\n"
-        message += f"""</ul>
+        AURORA_KP = 6.3
+        high_records_above_threshold = high_records[
+            (high_records["minimum"].astype(float) >= AURORA_KP)
+            | (high_records["median"].astype(float) >= AURORA_KP)
+            | (high_records["maximum"].astype(float) >= AURORA_KP)
+        ]
+        message += "</ul>\n"
+        if not high_records_above_threshold.empty:
+            message += "<h3><strong>AURORA WATCH:</strong></h3>\n"
+            message += f"<p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Note:</strong> Kp >= {AURORA_KP} indicate potential auroral activity at Berlin latitudes.\n"
 
+        message += f"""
             <h3><strong>GEOMAGNETIC STORM LEVELS:</strong></h3>
             <ul>
                 <li><strong>Kp 5:</strong> Minor geomagnetic storm (G1)</li>
@@ -277,20 +288,22 @@ class KpMonitor:
         next_24h = analysis["next_24h_forecast"]
         probability_df = analysis["probability_df"]
 
+        current_kp = analysis.next_24h_forecast["median"].iloc[0]
+
         # Determine current geomagnetic activity level
-        if current_max >= 8:
+        if current_kp >= 8:
             status = "SEVERE STORM CONDITIONS"
             level = "[G4]"
-        elif current_max >= 7:
+        elif current_kp >= 7:
             status = "STRONG STORM CONDITIONS"
             level = "[G3]"
-        elif current_max >= 6:
+        elif current_kp >= 6:
             status = "MODERATE STORM CONDITIONS"
             level = "[G2]"
-        elif current_max >= 5:
+        elif current_kp >= 5:
             status = "MINOR STORM CONDITIONS"
             level = "[G1]"
-        elif current_max >= 4:
+        elif current_kp >= 4:
             status = "ACTIVE CONDITIONS"
             level = "[ACTIVE]"
         else:
@@ -302,7 +315,7 @@ class KpMonitor:
         <h3><strong>CURRENT STATUS:</strong> {status} {level}</h3>
         <ul>
             <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
-            <li><strong>Maximum Kp for next 72 hours:</strong> {current_max:.2f}</li>
+            <li><strong>Maximum Kp for 72 hours window:</strong> {current_max:.2f}</li>
             <li><strong>Total number of ensembles:</strong> {self.total_ensembles}</li>
         </ul>
 
@@ -428,6 +441,8 @@ class KpMonitor:
             message = self.create_alert_message(analysis)
 
             email_sent = self.send_alert(subject, message)
+            with open("index.html", "w") as f:
+                f.write(message)
 
             if email_sent:
                 self.last_alert_time = pd.Timestamp.now(tz="UTC")
@@ -464,9 +479,12 @@ class KpMonitor:
         analysis = self.analyze_kp_data(df)
 
         # Create summary message
-        max_kp = analysis["current_max_kp"]
-        subject = f"Space Weather Summary Report - Current Kp: {max_kp:.1f}"
+        subject = (
+            f"Space Weather Summary Report - Current Median Kp: {analysis.next_24h_forecast['median'].iloc[0]:.1f}"
+        )
         message = self.create_summary_message(analysis)
+        with open("index.html", "w") as f:
+            f.write(message)
 
         try:
             self.construct_and_send_email(recipients, subject, message)
@@ -481,6 +499,7 @@ class KpMonitor:
     def construct_and_send_email(self, recipients, subject, message):
         msg = EmailMessage()
         msg["From"] = "pager"
+        msg["Reply-To"] = "jhawar@gfz.de"
         if len(recipients) == 1:
             msg["To"] = recipients[0]
         else:
