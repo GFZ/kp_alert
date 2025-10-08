@@ -12,6 +12,7 @@ URL: https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/kp_product_file_FOREC
 
 import argparse
 import logging
+import re
 import smtplib
 import time
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from email.message import EmailMessage
 from io import StringIO
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 import requests
 from pathlib import Path
@@ -34,6 +36,7 @@ class AnalysisResults:
     high_kp_records: pd.DataFrame
     next_24h_forecast: pd.DataFrame
     alert_worthy: bool
+    probability_df: pd.DataFrame
 
     def __getitem__(self, key):
         return getattr(self, key)
@@ -127,6 +130,10 @@ class KpMonitor:
             max_values = df["maximum"].astype(float)
             current_max = max_values.max()
 
+            self.ensembles = [col for col in df.columns if re.match(r"kp_\d+", col)]
+            self.total_ensembles = len(self.ensembles)
+            probability = np.sum(df[self.ensembles] >= self.config.kp_alert_threshold, axis=1) / self.total_ensembles
+
             df["Time (UTC)"] = pd.to_datetime(df["Time (UTC)"], format="%d-%m-%Y %H:%M", dayfirst=True, utc=True)
             df["Time (UTC)"] = df["Time (UTC)"].dt.tz_convert("UTC")
 
@@ -136,12 +143,17 @@ class KpMonitor:
             high_kp_records["Time (UTC)"] = pd.to_datetime(high_kp_records["Time (UTC)"], utc=True)
             next_24h["Time (UTC)"] = pd.to_datetime(next_24h["Time (UTC)"], utc=True)
 
+            probability_df = pd.DataFrame({"Time (UTC)": df["Time (UTC)"], "Probability": probability})
+            probability_df.index = probability_df["Time (UTC)"]
+            probability_df.drop(columns=["Time (UTC)"], inplace=True)
+
             analysis = AnalysisResults(
                 current_max_kp=current_max,
                 threshold_exceeded=current_max > self.config.kp_alert_threshold,
                 high_kp_records=high_kp_records,
                 next_24h_forecast=next_24h,
                 alert_worthy=len(high_kp_records) > 0,
+                probability_df=probability_df,
             )
 
             self.logger.info(
@@ -169,70 +181,80 @@ class KpMonitor:
         """
         max_kp = analysis["current_max_kp"]
         high_records = analysis["high_kp_records"]
+        probability_df = analysis["probability_df"]
 
         message = f"""<html><body>
-<h2><strong>SPACE WEATHER ALERT - Threshold Kp Index Detected</strong></h2>
-
-<h3><strong>ALERT SUMMARY:</strong></h3>
-<ul>
-<li><strong>3-day Maximum Kp:</strong> {max_kp:.2f}</li>
-<li><strong>Alert Threshold:</strong> {self.config.kp_alert_threshold}</li>
-            <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
-</ul>
-
-<h3><strong>HIGH Kp INDEX PERIODS DETECTED:</strong></h3>
-<ul>
+                    <h2><strong>SPACE WEATHER ALERT - Kp Index >= {self.config.kp_alert_threshold} Predicted</strong></h2>
+                    <h3><strong>ALERT SUMMARY:</strong></h3>
+                    <ul>
+                        <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
+                        <li><strong>Maximum Kp for next 72 hours:</strong> {max_kp:.2f}</li>
+                        <li><strong>Total number of ensembles:</strong> {self.total_ensembles}</li>
+                    </ul>
+                    <h3><strong>HIGH Kp INDEX PERIODS Predicted (Kp >= {self.config.kp_alert_threshold})</strong></h3>
+                    <ul>
 """
 
-        message += self._kp_html_table(high_records)
+        message += self._kp_html_table(high_records, probability_df)
         message += "</tbody></table>\n"
         message += f"""</ul>
 
             <h3><strong>GEOMAGNETIC STORM LEVELS:</strong></h3>
             <ul>
-            <li><strong>Kp 5:</strong> Minor geomagnetic storm (G1)</li>
-            <li><strong>Kp 6:</strong> Moderate geomagnetic storm (G2)</li>
-            <li><strong>Kp 7:</strong> Strong geomagnetic storm (G3)</li>
-            <li><strong>Kp 8:</strong> Severe geomagnetic storm (G4)</li>
-            <li><strong>Kp 9:</strong> Extreme geomagnetic storm (G5)</li>
+                <li><strong>Kp 5:</strong> Minor geomagnetic storm (G1)</li>
+                <li><strong>Kp 6:</strong> Moderate geomagnetic storm (G2)</li>
+                <li><strong>Kp 7:</strong> Strong geomagnetic storm (G3)</li>
+                <li><strong>Kp 8:</strong> Severe geomagnetic storm (G4)</li>
+                <li><strong>Kp 9:</strong> Extreme geomagnetic storm (G5)</li>
             </ul>
 
 
             <p><strong>DATA SOURCE:</strong> <a href='{KP_CSV_URL}'> {KP_CSV_URL}</a></p>
 
-            <p><em>This is an automated alert from the Kp Index Monitoring System.</em></p>
+            <p><em>This is an automated alert from the Kp Index Monitoring System using GFZ Space Weather Forecast.</em></p>
+
             </body></html>"""
 
         return message.strip()
 
-    def _kp_html_table(self, series) -> str:
+    def _kp_html_table(self, record: pd.DataFrame, probabilities: pd.DataFrame) -> str:
         prev_message = ""
         prev_message += '<table style="border-collapse: collapse; margin: 5px 0; font-size: 16px;">\n'
         prev_message += '<thead><tr style="background-color: #f0f0f0;">'
         prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; width: 120px; white-space: nowrap;">Time (UTC)</th>'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Median Kp Index</th>'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Min Kp Index</th>'
         prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Max Kp Index</th>'
         prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Status</th>'
+        prev_message += f'<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 80px; white-space: nowrap;">Probability (Kp &ge; {self.config.kp_alert_threshold})</th>'
         prev_message += "</tr></thead>\n<tbody>\n"
 
-        for _, record in series.iterrows():
-            kp_val = float(record["maximum"])
-            if kp_val >= 6:
+        for _, record in record.iterrows():
+            kp_val_max = float(record["maximum"])
+            kp_val_med = float(record["median"])
+            kp_val_min = float(record["minimum"])
+            if kp_val_max >= 6:
                 indicator = "ALERT"
                 color = "#ff0000"
-            elif kp_val >= 5:
+            elif kp_val_max >= 5:
                 indicator = "ALERT"
                 color = "#d9534f"
-            elif kp_val >= 4:
+            elif kp_val_max >= 4:
                 indicator = "ACTIVE"
                 color = "#f0ad4e"
             else:
                 indicator = "QUIET"
                 color = "#5cb85c"
 
-            prev_message += f"<tr>"
+            time_idx = record["Time (UTC)"]
+
+            prev_message += "<tr>"
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{record["Time (UTC)"]} UTC</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_val:.2f}</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_val_med:.2f}</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_val_min:.2f}</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_val_max:.2f}</strong></td>'
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {color}; white-space: nowrap;">{indicator}</td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{probabilities.loc[time_idx, "Probability"]:.2f}</strong></td>'
             prev_message += "</tr>\n"
 
         return prev_message
@@ -253,6 +275,7 @@ class KpMonitor:
         """
         current_max = analysis["current_max_kp"]
         next_24h = analysis["next_24h_forecast"]
+        probability_df = analysis["probability_df"]
 
         # Determine current geomagnetic activity level
         if current_max >= 8:
@@ -278,15 +301,16 @@ class KpMonitor:
 
         <h3><strong>CURRENT STATUS:</strong> {status} {level}</h3>
         <ul>
-                    <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
-        <li><strong>3-day Maximum Kp:</strong> {current_max:.2f}</li>
+            <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
+            <li><strong>Maximum Kp for next 72 hours:</strong> {current_max:.2f}</li>
+            <li><strong>Total number of ensembles:</strong> {self.total_ensembles}</li>
         </ul>
 
         <h3><strong>NEXT 24 HOURS FORECAST:</strong></h3>
         <ul>
         """
 
-        message += self._kp_html_table(next_24h)
+        message += self._kp_html_table(next_24h, probability_df)
 
         message += "</tbody></table>\n"
 
@@ -338,20 +362,7 @@ class KpMonitor:
         """
         try:
             recipients = self.config.recipients
-
-            # Construct email
-            msg = EmailMessage()
-            msg["Subject"] = subject
-            msg["From"] = "pager"
-            if len(recipients) == 1:
-                msg["To"] = recipients[0]
-            else:
-                msg["Bcc"] = ", ".join(recipients)
-            msg.add_alternative(message, subtype="html")
-
-            # Connect to local MTA (usually localhost:25)
-            with smtplib.SMTP("localhost") as smtp:
-                smtp.send_message(msg)
+            self.construct_and_send_email(recipients, subject, message)
 
             self.logger.info(f"Mail sent successfully to {len(recipients)} recipients")
             return True
@@ -413,7 +424,7 @@ class KpMonitor:
         # Check if alert should be sent
         if self.should_send_alert(analysis):
             max_kp = analysis["current_max_kp"]
-            subject = f"SPACE WEATHER ALERT: Threshold Kp Index ({self.config.kp_alert_threshold:.1f}) Detected"
+            subject = f"SPACE WEATHER ALERT: Kp Index {analysis['high_kp_records']['maximum'].max():.1f} Predicted"
             message = self.create_alert_message(analysis)
 
             email_sent = self.send_alert(subject, message)
@@ -458,19 +469,7 @@ class KpMonitor:
         message = self.create_summary_message(analysis)
 
         try:
-            msg = EmailMessage()
-            msg["From"] = "pager"
-            if len(recipients) == 1:
-                msg["To"] = recipients[0]
-            else:
-                msg["Bcc"] = ", ".join(recipients)
-            msg["Subject"] = subject
-
-            # Attach message body as HTML
-            msg.add_alternative(message, subtype="html")
-
-            with smtplib.SMTP("localhost") as smtp:
-                smtp.send_message(msg)
+            self.construct_and_send_email(recipients, subject, message)
 
             self.logger.info(f"Summary mail sent successfully to {len(recipients)} recipients")
             return True
@@ -478,6 +477,21 @@ class KpMonitor:
         except Exception as e:
             self.logger.error(f"Error sending mail: {e}", exc_info=True)
             return False
+
+    def construct_and_send_email(self, recipients, subject, message):
+        msg = EmailMessage()
+        msg["From"] = "pager"
+        if len(recipients) == 1:
+            msg["To"] = recipients[0]
+        else:
+            msg["Bcc"] = ", ".join(recipients)
+        msg["Subject"] = subject
+
+        # Attach message body as HTML
+        msg.add_alternative(message, subtype="html")
+
+        with smtplib.SMTP("localhost") as smtp:
+            smtp.send_message(msg)
 
     def run_continuous_monitoring(self) -> None:
         """
