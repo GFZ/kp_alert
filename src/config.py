@@ -6,6 +6,8 @@ This module provides a YAML-based configuration system with validation
 and type safety for the monitoring system.
 """
 
+from __future__ import annotations
+
 import os
 import re
 from dataclasses import dataclass
@@ -50,7 +52,7 @@ class MonitorConfig:
     log_level: str = "INFO"
 
     @staticmethod
-    def from_yaml(config_file: Path | str = None) -> "MonitorConfig":
+    def from_yaml(config_file: Path | str = None) -> MonitorConfig:
         """
         Load configuration from YAML file.
 
