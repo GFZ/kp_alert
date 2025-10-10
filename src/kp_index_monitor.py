@@ -13,6 +13,7 @@ URL: https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/kp_product_file_FOREC
 import argparse
 import logging
 import re
+import shutil
 import smtplib
 import time
 from dataclasses import dataclass
@@ -69,6 +70,8 @@ class KpMonitor:
     for geomagnetic activity monitoring.
     """
 
+    IMAGE_PATH = "/PAGER/FLAG/data/published/kp_swift_ensemble_LAST.png"
+
     def __init__(self, config: MonitorConfig):
         self.last_alert_time = None
         self.last_max_kp = 0
@@ -77,6 +80,7 @@ class KpMonitor:
         self.log_folder.mkdir(parents=True, exist_ok=True)
         self.config.kp_alert_threshold = np.round(self.config.kp_alert_threshold, 2)
         self.kp_threshold_str = DECIMAL_TO_KP[self.config.kp_alert_threshold]
+        self.LOCAL_IMAGE_PATH = shutil.copy2(self.IMAGE_PATH, "./kp_swift_ensemble_LAST.png")
         self.setup_logging()
 
     def setup_logging(self) -> None:
@@ -204,11 +208,14 @@ class KpMonitor:
         max_kp = analysis["current_max_kp"]
         high_records = analysis["high_kp_records"]
         probability_df = analysis["probability_df"]
+        current_kp = analysis.next_24h_forecast["median"].iloc[0]
+        status, _, color = self.get_status_level_color(current_kp)
 
         message = f"""<html><body>
                     <h2><strong>SPACE WEATHER ALERT - Kp Index >= {self.kp_threshold_str} Predicted</strong></h2>
                     <h3><strong>ALERT SUMMARY</strong></h3>
                     <ul>
+                        <li><strong>Current Status: </strong> <span style="color: {color};">  {status}</span></li>
                         <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
                         <li><strong>Maximum Kp for 72 hours window:</strong> {DECIMAL_TO_KP[max_kp]}</li>
                         <li><strong>Total number of ensembles:</strong> {self.total_ensembles}</li>
@@ -230,7 +237,7 @@ class KpMonitor:
         if not high_records_above_threshold.empty:
             message += "<h3><strong>AURORA WATCH:</strong></h3>\n"
             message += f"<p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Note:</strong> Kp >= {DECIMAL_TO_KP[AURORA_KP]} indicate potential auroral activity at Berlin latitudes.\n"
-        message += """<h3 id="note_act"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[4]</sup></strong></h3><ul>"""
+        message += """<h3 id="note_act2"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[5]</sup></strong></h3><ul>"""
         message += self.get_storm_level_description_table()
         message += "</tbody></table>\n</ul>"
         message += self.footer()
@@ -259,7 +266,7 @@ class KpMonitor:
         prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Median Kp Index<a href="#note_median"><sub>[1]</sub></a></th>'
         prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Min Kp Index<a href="#note_min"><sub>[2]</sub></a></th>'
         prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Max Kp Index<a href="#note_max"><sub>[3]</sub></a></th>'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Activity<a href="#note_act"><sub>[4]</sub></a></th>'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Activity<a href="#note_act"><sub>[4]</sub></a><a href="#note_act2"><sub>[5]</sub></a></th>'
         prev_message += f'<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 80px; white-space: nowrap;">Probability (Kp &ge; {self.kp_threshold_str})</th>'
         prev_message += "</tr></thead>\n<tbody>\n"
 
@@ -267,12 +274,12 @@ class KpMonitor:
             kp_val_max = np.round(record["maximum"], 2)
             kp_val_med = np.round(record["median"], 2)
             kp_val_min = np.round(record["minimum"], 2)
-            _, level, color = self.get_status_level_color(kp_val_max)
+            _, level, color = self.get_status_level_color(kp_val_med)
 
             time_idx = record["Time (UTC)"]
 
             prev_message += "<tr>"
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{record["Time (UTC)"].strftime("%Y-%m-%d %H:%M")} UTC</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{record["Time (UTC)"].strftime("%Y-%m-%d %H:%M")}</strong></td>'
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_med]}</strong></td>'
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_min]}</strong></td>'
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_max]}</strong></td>'
@@ -285,6 +292,7 @@ class KpMonitor:
                             <p id="note_median"><b>[1]</b> Median Kp Index: Median value of Kp Ensembles</p>
                             <p id="note_min"><b>[2]</b> Min Kp Index: Minimum value of Kp Ensembles</p>
                             <p id="note_max"><b>[3]</b> Max Kp Index: Maximum value of Kp Ensembles</p>
+                            <p id="note_act"><b>[4]</b> Activity is based on Median Kp</p>
                         </div>
                         """
 
@@ -309,8 +317,6 @@ class KpMonitor:
         probability_df = analysis["probability_df"]
 
         current_kp = analysis.next_24h_forecast["median"].iloc[0]
-
-        # Determine current geomagnetic activity level
         status, _, color = self.get_status_level_color(current_kp)
         message = f"""<html><body>
         <h2><strong>SPACE WEATHER - Kp Index SUMMARY REPORT</strong></h2>
@@ -328,21 +334,11 @@ class KpMonitor:
 
         message += self._kp_html_table(next_24h, probability_df)
 
-        message += "</tbody></table>\n</ul>\n"
-        message += """<h3 id="note_act"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[4]</sup></strong></h3><ul>"""
+        message += "</tbody></table>\n"
+        message += '<br><img src="cid:forecast_image" style="max-width:100%;">'
+        message += """</ul><h3 id="note_act2"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[5]</sup></strong></h3><ul>"""
         message += self.get_storm_level_description_table()
         message += "</tbody></table>\n</ul>"
-
-        message += """
-        <h3><strong>FORECAST DATA SUMMARY:</strong></h3>
-        <p>The latest ensemble predictions contain the following information:</p>
-        <ul>
-        <li>Time in UTC format: dd-mm-yyyy HH:MM</li>
-        <li>Minimum, 0.25-quantile, median, 0.75-quantile, maximum forecasted values</li>
-        <li>Probability ranges for different Kp levels</li>
-        <li>Individual ensemble members (currently varies between 12-20 members)</li>
-        </ul>
-        """
         message += self.footer()
         message += "</body></html>"
 
@@ -495,13 +491,9 @@ class KpMonitor:
         """
         self.logger.info("=" * 50)
         self.logger.info("Starting Kp index monitoring check")
-
-        # Fetch data
         df = self.fetch_kp_data()
         if df is None:
             return False
-
-        # Analyze data
         analysis = self.analyze_kp_data(df)
 
         # Check if alert should be sent
@@ -511,8 +503,9 @@ class KpMonitor:
             message = self.create_alert_message(analysis)
 
             email_sent = self.send_alert(subject, message)
+            message_for_file = message.replace("cid:forecast_image", self.LOCAL_IMAGE_PATH)
             with open("index.html", "w") as f:
-                f.write(message)
+                f.write(message_for_file)
 
             if email_sent:
                 self.last_alert_time = pd.Timestamp.now(tz="UTC")
@@ -539,22 +532,19 @@ class KpMonitor:
         recipients = self.config.recipients
         self.logger.info("Generating Kp summary")
 
-        # Fetch data
         df = self.fetch_kp_data()
         if df is None:
             self.logger.error("Failed to fetch data for summary")
             return False
-
-        # Analyze data
         analysis = self.analyze_kp_data(df)
-
-        # Create summary message
         subject = (
             f"Space Weather Summary Report - Current Median Kp: {analysis.next_24h_forecast['median'].iloc[0]:.1f}"
         )
         message = self.create_summary_message(analysis)
+
+        message_for_file = message.replace("cid:forecast_image", self.LOCAL_IMAGE_PATH)
         with open("index.html", "w") as f:
-            f.write(message)
+            f.write(message_for_file)
 
         try:
             self.construct_and_send_email(recipients, subject, message)
@@ -566,18 +556,8 @@ class KpMonitor:
             self.logger.error(f"Error sending mail: {e}", exc_info=True)
             return False
 
-    def construct_and_send_email(self, recipients, subject, message):
-        # msg = EmailMessage()
-        # msg["From"] = "pager"
-        # msg["Reply-To"] = "jhawar@gfz.de"
-        # if len(recipients) == 1:
-        #     msg["To"] = recipients[0]
-        # else:
-        #     msg["Bcc"] = ", ".join(recipients)
-        # msg["Subject"] = subject
-
-        IMAGE_PATH = "/PAGER/FLAG/data/published/kp_swift_ensemble_LAST.png"
-        # Create the root message as multipart/related
+    def construct_and_send_email(self, recipients: list[str], subject: str, message: str) -> None:
+        # root message as multipart/related
         msg_root = MIMEMultipart("related")
         msg_root["From"] = "pager"
         msg_root["Reply-To"] = "jhawar@gfz.de"
@@ -594,7 +574,7 @@ class KpMonitor:
         msg_alternative.attach(MIMEText(plain_text, "plain"))
 
         msg_alternative.attach(MIMEText(message, "html"))
-        with open(IMAGE_PATH, "rb") as f:
+        with open(self.LOCAL_IMAGE_PATH, "rb") as f:
             img = MIMEImage(f.read())
             img.add_header("Content-ID", "<forecast_image>")
             img.add_header("Content-Disposition", "inline", filename="forecast_image.png")
