@@ -17,14 +17,16 @@ import smtplib
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from email.message import EmailMessage
+from email.mime.image import MIMEImage
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from io import StringIO
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 import requests
-from pathlib import Path
 
 from src.config import KP_CSV_URL, MonitorConfig
 
@@ -42,6 +44,23 @@ class AnalysisResults:
         return getattr(self, key)
 
 
+# fmt: off
+KP_TO_DECIMAL = {
+    "0": 0.00, "0+": 0.33,
+    "1-": 0.67, "1": 1.00, "1+": 1.33,
+    "2-": 1.67, "2": 2.00, "2+": 2.33,
+    "3-": 2.67, "3": 3.00, "3+": 3.33,
+    "4-": 3.67, "4": 4.00, "4+": 4.33,
+    "5-": 4.67, "5": 5.00, "5+": 5.33,
+    "6-": 5.67, "6": 6.00, "6+": 6.33,
+    "7-": 6.67, "7": 7.00, "7+": 7.33,
+    "8-": 7.67, "8": 8.00, "8+": 8.33,
+    "9-": 8.67, "9": 9.00
+}
+# fmt: on
+DECIMAL_TO_KP = {v: k for k, v in KP_TO_DECIMAL.items()}
+
+
 class KpMonitor:
     """
     Main monitoring class for Kp index space weather data.
@@ -56,6 +75,8 @@ class KpMonitor:
         self.config = config
         self.log_folder = Path(self.config.log_folder)
         self.log_folder.mkdir(parents=True, exist_ok=True)
+        self.config.kp_alert_threshold = np.round(self.config.kp_alert_threshold, 2)
+        self.kp_threshold_str = DECIMAL_TO_KP[self.config.kp_alert_threshold]
         self.setup_logging()
 
     def setup_logging(self) -> None:
@@ -128,7 +149,7 @@ class KpMonitor:
         try:
             # Get current maximum values
             max_values = df["maximum"].astype(float)
-            current_max = max_values.max()
+            current_max = np.round(max_values.max(), 2)
 
             self.ensembles = [col for col in df.columns if re.match(r"kp_\d+", col)]
             self.total_ensembles = len(self.ensembles)
@@ -151,14 +172,14 @@ class KpMonitor:
             analysis = AnalysisResults(
                 current_max_kp=current_max,
                 threshold_exceeded=current_max > self.config.kp_alert_threshold,
-                high_kp_records=high_kp_records,
-                next_24h_forecast=next_24h,
+                high_kp_records=high_kp_records.round(2),
+                next_24h_forecast=next_24h.round(2),
                 alert_worthy=len(high_kp_records) > 0,
-                probability_df=probability_df,
+                probability_df=probability_df.round(2),
             )
 
             self.logger.info(
-                f"Analysis complete - Current Kp: {current_max:.2f}, Alert: {analysis['alert_worthy']}, Threshold: {self.config.kp_alert_threshold}"
+                f"Analysis complete - Current Kp: {DECIMAL_TO_KP[current_max]}, Alert: {analysis['alert_worthy']}, Threshold: {self.kp_threshold_str}"
             )
             return analysis
 
@@ -185,20 +206,21 @@ class KpMonitor:
         probability_df = analysis["probability_df"]
 
         message = f"""<html><body>
-                    <h2><strong>SPACE WEATHER ALERT - Kp Index >= {self.config.kp_alert_threshold} Predicted</strong></h2>
-                    <h3><strong>ALERT SUMMARY:</strong></h3>
+                    <h2><strong>SPACE WEATHER ALERT - Kp Index >= {self.kp_threshold_str} Predicted</strong></h2>
+                    <h3><strong>ALERT SUMMARY</strong></h3>
                     <ul>
-                        <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
-                        <li><strong>Maximum Kp for next 72 hours:</strong> {max_kp:.2f}</li>
+                        <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
+                        <li><strong>Maximum Kp for 72 hours window:</strong> {DECIMAL_TO_KP[max_kp]}</li>
                         <li><strong>Total number of ensembles:</strong> {self.total_ensembles}</li>
                     </ul>
-                    <h3><strong>HIGH Kp INDEX PERIODS Predicted (Kp >= {self.config.kp_alert_threshold})</strong></h3>
+                    <h3><strong>HIGH Kp INDEX PERIODS Predicted (Kp >= {self.kp_threshold_str})</strong></h3>
                     <ul>
                     """
 
         message += self._kp_html_table(high_records, probability_df)
         message += "</tbody></table>\n"
-        AURORA_KP = 6.3
+        message += '<br><img src="cid:forecast_image" style="max-width:100%;">'
+        AURORA_KP = 6.33
         high_records_above_threshold = high_records[
             (high_records["minimum"].astype(float) >= AURORA_KP)
             | (high_records["median"].astype(float) >= AURORA_KP)
@@ -207,66 +229,64 @@ class KpMonitor:
         message += "</ul>\n"
         if not high_records_above_threshold.empty:
             message += "<h3><strong>AURORA WATCH:</strong></h3>\n"
-            message += f"<p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Note:</strong> Kp >= {AURORA_KP} indicate potential auroral activity at Berlin latitudes.\n"
-
-        message += f"""
-            <h3><strong>GEOMAGNETIC STORM LEVELS:</strong></h3>
-            <ul>
-                <li><strong>Kp 5:</strong> Minor geomagnetic storm (G1)</li>
-                <li><strong>Kp 6:</strong> Moderate geomagnetic storm (G2)</li>
-                <li><strong>Kp 7:</strong> Strong geomagnetic storm (G3)</li>
-                <li><strong>Kp 8:</strong> Severe geomagnetic storm (G4)</li>
-                <li><strong>Kp 9:</strong> Extreme geomagnetic storm (G5)</li>
-            </ul>
-
-
-            <p><strong>DATA SOURCE:</strong> <a href='{KP_CSV_URL}'> {KP_CSV_URL}</a></p>
-
-            <p><em>This is an automated alert from the Kp Index Monitoring System using GFZ Space Weather Forecast.</em></p>
-
-            </body></html>"""
+            message += f"<p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Note:</strong> Kp >= {DECIMAL_TO_KP[AURORA_KP]} indicate potential auroral activity at Berlin latitudes.\n"
+        message += """<h3 id="note_act"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[4]</sup></strong></h3><ul>"""
+        message += self.get_storm_level_description_table()
+        message += "</tbody></table>\n</ul>"
+        message += self.footer()
+        message += "</body></html>"
 
         return message.strip()
+
+    def footer(self) -> str:
+        return f"""
+            <p><strong>DATA SOURCE:</strong> <a href='https://spaceweather.gfz-potsdam.de/'> https://spaceweather.gfz-potsdam.de/</a></p>
+            <p><em>This is an automated alert from the Kp Index Monitoring System using GFZ Space Weather Forecast.</em></p>
+            <hr>
+            <p style="font-size: 12px; color: #888;">
+            &copy; {datetime.now().year} GFZ Helmholtz Centre for Geosciences | GFZ Helmholtz-Zentrum für Geoforschung<br>
+            The data/data products are provided “as-is” without warranty of any kind either expressed or implied, including but not limited to the implied warranties of merchantability, correctness and fitness for a particular purpose. The entire risk as to the quality and performance of the Data/data products is with the Licensee.
+
+            In no event will GFZ be liable for any damages direct, indirect, incidental, or consequential, including damages for any lost profits, lost savings, or other incidental or consequential damages arising out of the use or inability to use the data/data products.
+
+            """
 
     def _kp_html_table(self, record: pd.DataFrame, probabilities: pd.DataFrame) -> str:
         prev_message = ""
         prev_message += '<table style="border-collapse: collapse; margin: 5px 0; font-size: 16px;">\n'
         prev_message += '<thead><tr style="background-color: #f0f0f0;">'
         prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; width: 120px; white-space: nowrap;">Time (UTC)</th>'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Median Kp Index</th>'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Min Kp Index</th>'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Max Kp Index</th>'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Status</th>'
-        prev_message += f'<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 80px; white-space: nowrap;">Probability (Kp &ge; {self.config.kp_alert_threshold})</th>'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Median Kp Index<a href="#note_median"><sub>[1]</sub></a></th>'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Min Kp Index<a href="#note_min"><sub>[2]</sub></a></th>'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Max Kp Index<a href="#note_max"><sub>[3]</sub></a></th>'
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Activity<a href="#note_act"><sub>[4]</sub></a></th>'
+        prev_message += f'<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 80px; white-space: nowrap;">Probability (Kp &ge; {self.kp_threshold_str})</th>'
         prev_message += "</tr></thead>\n<tbody>\n"
 
         for _, record in record.iterrows():
-            kp_val_max = float(record["maximum"])
-            kp_val_med = float(record["median"])
-            kp_val_min = float(record["minimum"])
-            if kp_val_max >= 6:
-                indicator = "ALERT"
-                color = "#ff0000"
-            elif kp_val_max >= 5:
-                indicator = "ALERT"
-                color = "#d9534f"
-            elif kp_val_max >= 4:
-                indicator = "ACTIVE"
-                color = "#f0ad4e"
-            else:
-                indicator = "QUIET"
-                color = "#5cb85c"
+            kp_val_max = np.round(record["maximum"], 2)
+            kp_val_med = np.round(record["median"], 2)
+            kp_val_min = np.round(record["minimum"], 2)
+            _, level, color = self.get_status_level_color(kp_val_max)
 
             time_idx = record["Time (UTC)"]
 
             prev_message += "<tr>"
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{record["Time (UTC)"]} UTC</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_val_med:.2f}</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_val_min:.2f}</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_val_max:.2f}</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {color}; white-space: nowrap;">{indicator}</td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{record["Time (UTC)"].strftime("%Y-%m-%d %H:%M")} UTC</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_med]}</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_min]}</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_max]}</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {color}; white-space: nowrap;">{level}</td>'
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{probabilities.loc[time_idx, "Probability"]:.2f}</strong></td>'
             prev_message += "</tr>\n"
+        prev_message += "</tbody></table>\n"
+        prev_message += """
+                        <div style="font-size: 14px; margin-top: 8px;">
+                            <p id="note_median"><b>[1]</b> Median Kp Index: Median value of Kp Ensembles</p>
+                            <p id="note_min"><b>[2]</b> Min Kp Index: Minimum value of Kp Ensembles</p>
+                            <p id="note_max"><b>[3]</b> Max Kp Index: Maximum value of Kp Ensembles</p>
+                        </div>
+                        """
 
         return prev_message
 
@@ -291,31 +311,14 @@ class KpMonitor:
         current_kp = analysis.next_24h_forecast["median"].iloc[0]
 
         # Determine current geomagnetic activity level
-        if current_kp >= 8:
-            status = "SEVERE STORM CONDITIONS"
-            level = "[G4]"
-        elif current_kp >= 7:
-            status = "STRONG STORM CONDITIONS"
-            level = "[G3]"
-        elif current_kp >= 6:
-            status = "MODERATE STORM CONDITIONS"
-            level = "[G2]"
-        elif current_kp >= 5:
-            status = "MINOR STORM CONDITIONS"
-            level = "[G1]"
-        elif current_kp >= 4:
-            status = "ACTIVE CONDITIONS"
-            level = "[ACTIVE]"
-        else:
-            status = "QUIET CONDITIONS"
-            level = "[QUIET]"
+        status, _, color = self.get_status_level_color(current_kp)
         message = f"""<html><body>
         <h2><strong>SPACE WEATHER - Kp Index SUMMARY REPORT</strong></h2>
 
-        <h3><strong>CURRENT STATUS:</strong> {status} {level}</h3>
+        <h3><strong>CURRENT STATUS:</strong> <span style="color: {color};">  {status}</span></h3>
         <ul>
-            <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</li>
-            <li><strong>Maximum Kp for 72 hours window:</strong> {current_max:.2f}</li>
+            <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
+            <li><strong>Maximum Kp for 72 hours window:</strong> {DECIMAL_TO_KP[current_max]}</li>
             <li><strong>Total number of ensembles:</strong> {self.total_ensembles}</li>
         </ul>
 
@@ -325,22 +328,12 @@ class KpMonitor:
 
         message += self._kp_html_table(next_24h, probability_df)
 
-        message += "</tbody></table>\n"
+        message += "</tbody></table>\n</ul>\n"
+        message += """<h3 id="note_act"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[4]</sup></strong></h3><ul>"""
+        message += self.get_storm_level_description_table()
+        message += "</tbody></table>\n</ul>"
 
-        # Add interpretation guide
-        message += f"""
-        </ul>
-        <h3><strong>GEOMAGNETIC ACTIVITY SCALE:</strong></h3>
-        <ul>
-        <li><strong>Kp 0-2:</strong> Quiet conditions</li>
-        <li><strong>Kp 3-4:</strong> Unsettled to Active conditions</li>
-        <li><strong>Kp 5:</strong> Minor Storm (G1) - Weak power grid fluctuations</li>
-        <li><strong>Kp 6:</strong> Moderate Storm (G2) - High-latitude power systems affected</li>
-        <li><strong>Kp 7:</strong> Strong Storm (G3) - Power systems may experience voltage corrections</li>
-        <li><strong>Kp 8:</strong> Severe Storm (G4) - Possible widespread voltage control problems</li>
-        <li><strong>Kp 9:</strong> Extreme Storm (G5) - Widespread power system voltage control problems</li>
-        </ul>
-
+        message += """
         <h3><strong>FORECAST DATA SUMMARY:</strong></h3>
         <p>The latest ensemble predictions contain the following information:</p>
         <ul>
@@ -349,13 +342,90 @@ class KpMonitor:
         <li>Probability ranges for different Kp levels</li>
         <li>Individual ensemble members (currently varies between 12-20 members)</li>
         </ul>
-
-        <p><strong>DATA SOURCE:</strong>  <a href='{KP_CSV_URL}'> {KP_CSV_URL}</a></p>
-
-        <p><em>This is an automated summary from the Kp Index Monitoring System using GFZ Space Weather Forecast.</em></p>
-        </body></html>"""
+        """
+        message += self.footer()
+        message += "</body></html>"
 
         return message.strip()
+
+    def get_storm_level_description_table(self) -> str:
+        table_html = ""
+        table_html += '<table style="border-collapse: collapse; margin: 5px 0; font-size: 16px;">\n'
+        table_html += '<thead><tr style="background-color: #f0f0f0;">'
+        table_html += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; width: 120px; white-space: nowrap;">Level</th>'
+        table_html += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Kp Value</th>'
+        table_html += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; width: 400px; white-space: nowrap;">Description</th>'
+        table_html += "</tr></thead>\n<tbody>\n"
+
+        rows = [
+            ("Quiet", "0-2", "Quiet conditions"),
+            ("Unsettled to Active", "3-4", "Unsettled to Active conditions"),
+            ("Minor Storm (G1)", "5", "Weak power grid fluctuations"),
+            ("Moderate Storm (G2)", "6", "High-latitude power systems affected"),
+            ("Strong Storm (G3)", "7", "Power systems may experience voltage corrections"),
+            ("Severe Storm (G4)", "8", "Possible widespread voltage control problems"),
+            ("Extreme Storm (G5)", "9", "Widespread power system voltage control problems"),
+        ]
+
+        for level, kp_value, desc in rows:
+            table_html += "<tr>"
+            table_html += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{level}</strong></td>'
+            table_html += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_value}</strong></td>'
+            table_html += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;">{desc}</td>'
+            table_html += "</tr>\n"
+
+        table_html += "</tbody></table>\n"
+        return table_html
+
+    def get_status_level_color(self, kp: float) -> tuple[str, str, str]:
+        """Get geomagnetic status, level, and color based on Kp value.
+
+        Parameters
+        ----------
+        kp : float
+            Kp index value
+
+        Returns
+        -------
+        status : str
+            Geomagnetic activity status description
+        level : str
+            Geomagnetic storm level (e.g., [G1], [G2], etc.)
+        color : str
+            Hex color code representing severity
+        """
+        status = "UNKNOWN"
+        level = "[?]"
+        color = "#000000"
+        if kp == 9:
+            status = "EXTREME STORM CONDITIONS"
+            level = "G5"
+            color = "#FE0004"
+        elif kp >= 8:
+            status = "SEVERE STORM CONDITIONS"
+            level = "G4"
+            color = "#FE0004"
+        elif kp >= 7:
+            status = "STRONG STORM CONDITIONS"
+            level = "G3"
+            color = "#FD0007"
+        elif kp >= 6:
+            status = "MODERATE STORM CONDITIONS"
+            level = "G2"
+            color = "#FF4612"
+        elif kp >= 5:
+            status = "MINOR STORM CONDITIONS"
+            level = "G1"
+            color = "#FE801D"
+        elif kp >= 4:
+            status = "ACTIVE CONDITIONS"
+            level = "ACTIVE"
+            color = "#FFFA3D"
+        else:
+            status = "QUIET CONDITIONS"
+            level = "QUIET"
+            color = "#5cb85c"
+        return status, level, color
 
     def send_alert(self, subject: str, message: str) -> bool:
         """
@@ -449,7 +519,7 @@ class KpMonitor:
                 self.last_max_kp = max_kp
         else:
             self.logger.info(
-                f"No alert needed - Current Kp: {analysis['current_max_kp']:.2f}, Threshold: {self.config.kp_alert_threshold}"
+                f"No alert needed - Current Kp: {analysis['current_max_kp']:.2f}, Threshold: {self.kp_threshold_str}"
             )
 
         return True
@@ -497,20 +567,41 @@ class KpMonitor:
             return False
 
     def construct_and_send_email(self, recipients, subject, message):
-        msg = EmailMessage()
-        msg["From"] = "pager"
-        msg["Reply-To"] = "jhawar@gfz.de"
-        if len(recipients) == 1:
-            msg["To"] = recipients[0]
-        else:
-            msg["Bcc"] = ", ".join(recipients)
-        msg["Subject"] = subject
+        # msg = EmailMessage()
+        # msg["From"] = "pager"
+        # msg["Reply-To"] = "jhawar@gfz.de"
+        # if len(recipients) == 1:
+        #     msg["To"] = recipients[0]
+        # else:
+        #     msg["Bcc"] = ", ".join(recipients)
+        # msg["Subject"] = subject
 
-        # Attach message body as HTML
-        msg.add_alternative(message, subtype="html")
+        IMAGE_PATH = "/PAGER/FLAG/data/published/kp_swift_ensemble_LAST.png"
+        # Create the root message as multipart/related
+        msg_root = MIMEMultipart("related")
+        msg_root["From"] = "pager"
+        msg_root["Reply-To"] = "jhawar@gfz.de"
+        if len(recipients) == 1:
+            msg_root["To"] = recipients[0]
+        else:
+            msg_root["Bcc"] = ", ".join(recipients)
+        msg_root["Subject"] = subject
+
+        msg_alternative = MIMEMultipart("alternative")
+        msg_root.attach(msg_alternative)
+
+        plain_text = "Your email client does not support HTML."
+        msg_alternative.attach(MIMEText(plain_text, "plain"))
+
+        msg_alternative.attach(MIMEText(message, "html"))
+        with open(IMAGE_PATH, "rb") as f:
+            img = MIMEImage(f.read())
+            img.add_header("Content-ID", "<forecast_image>")
+            img.add_header("Content-Disposition", "inline", filename="forecast_image.png")
+            msg_root.attach(img)
 
         with smtplib.SMTP("localhost") as smtp:
-            smtp.send_message(msg)
+            smtp.send_message(msg_root)
 
     def run_continuous_monitoring(self) -> None:
         """
