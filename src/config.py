@@ -37,6 +37,8 @@ class MonitorConfig:
         Path to log folder for monitoring output
     log_level : str, default="INFO"
         Logging level (DEBUG, INFO, WARNING, ERROR)
+    debug_with_swpc: bool, default=False
+        If True, use the SWPC debug images
     """
 
     # Alert settings
@@ -48,6 +50,7 @@ class MonitorConfig:
     # Logging configuration
     log_folder: str
     log_level: str = "INFO"
+    debug_with_swpc: bool = False
 
     @staticmethod
     def from_yaml(config_file: Path | str = None) -> MonitorConfig:
@@ -130,6 +133,9 @@ class MonitorConfig:
         # Validate log file path
         if not self.log_folder:
             errors.append("log_folder cannot be empty")
+        
+        if not isinstance(self.debug_with_swpc, bool):
+            errors.append("debug_with_swpc must be a boolean value")
 
         if errors:
             raise ValueError("Configuration validation failed:\n" + "\n".join(f"  - {error}" for error in errors))
