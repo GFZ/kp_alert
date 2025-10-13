@@ -16,8 +16,6 @@ from typing import List
 
 import yaml
 
-KP_CSV_URL = "https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv"
-
 
 @dataclass
 class MonitorConfig:
