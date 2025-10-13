@@ -26,7 +26,6 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-import requests
 
 from src.config import MonitorConfig
 
@@ -81,19 +80,27 @@ class KpMonitor:
     """
 
     IMAGE_PATH = "/PAGER/FLAG/data/published/kp_swift_ensemble_LAST.png"
+    IMAGE_PATH_SWPC = "/PAGER/FLAG/data/published/kp_swift_ensemble_with_swpc_LAST.png"
     CSV_PATH = "/PAGER/FLAG/data/published/products/Kp/kp_product_file_SWIFT_LAST.csv"
 
-    def __init__(self, config: MonitorConfig):
+    def __init__(self, config: MonitorConfig, log_suffix: str = "") -> None:
         self.last_alert_time = None
         self.last_max_kp = 0
         self.config = config
         self.log_folder = Path(self.config.log_folder)
+        self.debug_with_swpc = self.config.debug_with_swpc
         self.log_folder.mkdir(parents=True, exist_ok=True)
         self.config.kp_alert_threshold = np.round(self.config.kp_alert_threshold, 2)
         self.kp_threshold_str = DECIMAL_TO_KP[self.config.kp_alert_threshold]
-        self.LOCAL_IMAGE_PATH = shutil.copy2(self.IMAGE_PATH, "./kp_swift_ensemble_LAST.png")
+        self.LOCAL_IMAGE_PATH = self.copy_image()
         self.current_utc_time = pd.Timestamp(datetime.now(timezone.utc))
+        self.log_suffix = log_suffix
         self.setup_logging()
+
+    def copy_image(self) -> str:
+        if self.debug_with_swpc:
+            return shutil.copy2(self.IMAGE_PATH_SWPC, "./kp_swift_ensemble_with_swpc_LAST.png")
+        return shutil.copy2(self.IMAGE_PATH, "./kp_swift_ensemble_LAST.png")
 
     def setup_logging(self) -> None:
         """
@@ -107,7 +114,7 @@ class KpMonitor:
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             handlers=[
                 logging.FileHandler(
-                    self.log_folder / f"kp_monitor_{datetime.now(timezone.utc).strftime('%Y%d%mT%H%M00')}.log"
+                    self.log_folder / f"kp_monitor_{self.log_suffix}_{datetime.now(timezone.utc).strftime('%Y%d%m')}.log"
                 ),
                 logging.StreamHandler(),
             ],
@@ -479,17 +486,15 @@ class KpMonitor:
         """
         if not analysis["alert_worthy"]:
             return False
-        return True
-
         # # Avoid sending multiple alerts for the same high Kp period
-        # current_time = pd.Timestamp.now(tz="UTC")
-        # if self.last_alert_time:
-        #     time_since_last_alert = (current_time - self.last_alert_time).total_seconds() / 3600
-        #     if time_since_last_alert < 6:  # Don't send alerts more than once every 6 hours
-        #         self.logger.info("Skipping alert - too soon since last alert")
-        #         return False
+        current_time = pd.Timestamp.now(tz="UTC")
+        if self.last_alert_time:
+            time_since_last_alert = (current_time - self.last_alert_time).total_seconds() / 3600
+            if time_since_last_alert < 6:  # Don't send alerts more than once every 6 hours
+                self.logger.warning("Skipping alert - too soon since last alert")
+                return False
 
-        # return True
+        return True
 
     def run_single_check(self) -> bool:
         """
@@ -666,7 +671,9 @@ def main():
     args = parser.parse_args()
 
     config = MonitorConfig.from_yaml()
-    monitor = KpMonitor(config)
+    log_suffix = "summary" if args.summary else "alert"
+    log_suffix += "_once" if args.once else "_continuous" if args.continuous else "_test"
+    monitor = KpMonitor(config, log_suffix=log_suffix)
 
     if args.test:
         subject = "Kp Monitor Test Email"
