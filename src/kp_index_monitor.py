@@ -189,7 +189,7 @@ class KpMonitor:
             probability = np.sum(df[self.ensembles] >= self.config.kp_alert_threshold, axis=1) / self.total_ensembles
             high_kp_records = df[df["maximum"].astype(float) >= self.config.kp_alert_threshold].copy()
             high_kp_records = high_kp_records[high_kp_records["Time (UTC)"] >= self.current_utc_time].copy()
-            next_24h = df[df["Time (UTC)"] >= self.current_utc_time].head(8).copy()
+            next_24h = df[df["Time (UTC)"] >= self.current_utc_time].head(9).copy()
 
             high_kp_records["Time (UTC)"] = pd.to_datetime(high_kp_records["Time (UTC)"], utc=True)
             next_24h["Time (UTC)"] = pd.to_datetime(next_24h["Time (UTC)"], utc=True)
@@ -217,62 +217,6 @@ class KpMonitor:
             self.logger.error(f"Error analyzing data: {e}", exc_info=True)
             return {"alert_worthy": False, "max_kp": 0}
 
-    def create_alert_message(self, analysis: AnalysisResults) -> str:
-        """
-        Create formatted alert message for high Kp conditions.
-
-        Parameters
-        ----------
-        analysis : AnalysisResults
-            AnalysisResults containing analysis results from analyze_kp_data
-
-        Returns
-        -------
-        str
-            Formatted HTML alert message string ready for email
-        """
-        high_records = analysis["high_kp_records"]
-        probability_df = analysis["probability_df"]
-        current_kp = analysis.next_24h_forecast["median"].iloc[0]
-        status, _, color = self.get_status_level_color(current_kp)
-
-        max_values = analysis["max_df"]
-        time_diff = np.ceil((max_values.idxmax() - self.current_utc_time).total_seconds() / 3600)
-
-        message = f"""<html><body>
-                    <h2><strong>SPACE WEATHER ALERT - Kp Index >= {self.kp_threshold_str} Predicted</strong></h2>
-                    <h3><strong>ALERT SUMMARY</strong></h3>
-                    <ul>
-                        <li><strong>Current Status: <span style="color: {color};">  {status}</span> </strong></li>
-                        <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
-                        <li><strong>Maximum Kp for {time_diff} hours window:</strong> {DECIMAL_TO_KP[np.round(max_values.max(),2)]}</li>
-                        <li><strong>Total number of ensembles:</strong> {self.total_ensembles}</li>
-                    </ul>
-                    <h3><strong>HIGH Kp INDEX PERIODS Predicted (Kp >= {self.kp_threshold_str})</strong></h3>
-                    <ul>
-                    """
-
-        message += self._kp_html_table(high_records, probability_df)
-        message += "</tbody></table>\n"
-        message += '<br><img src="cid:forecast_image" style="max-width:100%;">'
-        AURORA_KP = 6.33
-        high_records_above_threshold = high_records[
-            (high_records["minimum"].astype(float) >= AURORA_KP)
-            | (high_records["median"].astype(float) >= AURORA_KP)
-            | (high_records["maximum"].astype(float) >= AURORA_KP)
-        ]
-        message += "</ul>\n"
-        if not high_records_above_threshold.empty:
-            message += "<h3><strong>AURORA WATCH:</strong></h3>\n"
-            message += f"<p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Note:</strong> Kp >= {DECIMAL_TO_KP[AURORA_KP]} indicate potential auroral activity at Berlin latitudes.\n"
-        message += """<h3 id="note_act2"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[5]</sup></strong></h3><ul>"""
-        message += self.get_storm_level_description_table()
-        message += "</tbody></table>\n</ul>"
-        message += self.footer()
-        message += "</body></html>"
-
-        return message.strip()
-
     def footer(self) -> str:
         return f"""
             <p><strong>DATA SOURCE:</strong> <a href='https://spaceweather.gfz-potsdam.de/'> https://spaceweather.gfz-potsdam.de/</a></p>
@@ -291,11 +235,15 @@ class KpMonitor:
         prev_message += '<table style="border-collapse: collapse; margin: 5px 0; font-size: 16px;">\n'
         prev_message += '<thead><tr style="background-color: #f0f0f0;">'
         prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; width: 120px; white-space: nowrap;">Time (UTC)</th>'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Median Kp Index<a href="#note_median"><sub>[1]</sub></a></th>'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Min Kp Index<a href="#note_min"><sub>[2]</sub></a></th>'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Max Kp Index<a href="#note_max"><sub>[3]</sub></a></th>'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Activity<a href="#note_act"><sub>[4]</sub></a><a href="#note_act2"><sub>[5]</sub></a></th>'
         prev_message += f'<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 80px; white-space: nowrap;">Probability (Kp &ge; {self.kp_threshold_str})</th>'
+
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Min Kp Index<a href="#note_min"><sub>[1]</sub></a></th>'
+
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Max Kp Index<a href="#note_max"><sub>[2]</sub></a></th>'
+
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Median Kp Index<a href="#note_median"><sub>[3]</sub></a></th>'
+
+        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Median Activity<a href="#note_act"><sub>[4]</sub></a></th>'
         prev_message += "</tr></thead>\n<tbody>\n"
 
         for _, record in record.iterrows():
@@ -308,19 +256,18 @@ class KpMonitor:
 
             prev_message += "<tr>"
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{record["Time (UTC)"].strftime("%Y-%m-%d %H:%M")}</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_med]}</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{probabilities.loc[time_idx, "Probability"]:.2f}</strong></td>'
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_min]}</strong></td>'
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_max]}</strong></td>'
+            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_med]}</strong></td>'
             prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {color}; white-space: nowrap;">{level}</td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{probabilities.loc[time_idx, "Probability"]:.2f}</strong></td>'
             prev_message += "</tr>\n"
         prev_message += "</tbody></table>\n"
         prev_message += """
                         <div style="font-size: 14px; margin-top: 8px;">
-                            <p id="note_median"><b>[1]</b> Median Kp Index: Median value of Kp Ensembles</p>
-                            <p id="note_min"><b>[2]</b> Min Kp Index: Minimum value of Kp Ensembles</p>
-                            <p id="note_max"><b>[3]</b> Max Kp Index: Maximum value of Kp Ensembles</p>
-                            <p id="note_act"><b>[4]</b> Activity is based on Median Kp</p>
+                            <p id="note_min"><b>[1]</b> Min Kp Index: Minimum value of Kp Ensembles</p>
+                            <p id="note_max"><b>[2]</b> Max Kp Index: Maximum value of Kp Ensembles</p>
+                            <p id="note_median"><b>[3]</b> Median Kp Index: Median value of Kp Ensembles</p>
                         </div>
                         """
 
@@ -345,6 +292,11 @@ class KpMonitor:
         max_values = analysis["max_df"]
         time_diff = np.ceil((max_values.idxmax() - self.current_utc_time).total_seconds() / 3600)
 
+        prob_at_time = 24  # hours
+        target_time = self.current_utc_time + pd.Timedelta(hours=prob_at_time)
+        nearest_idx = probability_df.index.get_indexer([target_time], method="bfill")[0]
+        prob_value = probability_df.iloc[nearest_idx]["Probability"]
+
         current_kp = analysis.next_24h_forecast["median"].iloc[0]
         status, _, color = self.get_status_level_color(current_kp)
         message = f"""<html><body>
@@ -353,8 +305,8 @@ class KpMonitor:
         <h3><strong>CURRENT STATUS:</strong> <span style="color: {color};">  {status}</span></h3>
         <ul>
             <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
-            <li><strong>Maximum Kp for {time_diff} hours window:</strong> {DECIMAL_TO_KP[np.round(max_values.max(),2)]}</li>
-            <li><strong>Total number of ensembles:</strong> {self.total_ensembles}</li>
+            <li><strong>Maximum Kp for {time_diff} hours window:</strong> {DECIMAL_TO_KP[np.round(max_values.max(), 2)]}</li>
+            <li><strong>{prob_value * 100:.2f}% Probability of Kp &ge; {self.kp_threshold_str} in next {prob_at_time} hours</strong></li>
         </ul>
 
         <h3><strong>NEXT 24 HOURS FORECAST:</strong></h3>
@@ -365,7 +317,68 @@ class KpMonitor:
 
         message += "</tbody></table>\n"
         message += '<br><img src="cid:forecast_image" style="max-width:100%;">'
-        message += """</ul><h3 id="note_act2"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[5]</sup></strong></h3><ul>"""
+        message += """</ul><h3 id="note_act"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[4]</sup></strong></h3><ul>"""
+        message += self.get_storm_level_description_table()
+        message += "</tbody></table>\n</ul>"
+        message += self.footer()
+        message += "</body></html>"
+
+        return message.strip()
+
+    def create_alert_message(self, analysis: AnalysisResults) -> str:
+        """
+        Create formatted alert message for high Kp conditions.
+
+        Parameters
+        ----------
+        analysis : `AnalysisResults`
+            `AnalysisResults` containing analysis results from analyze_kp_data
+
+        Returns
+        -------
+        str
+            Formatted HTML alert message string ready for email
+        """
+        high_records = analysis["high_kp_records"]
+        probability_df = analysis["probability_df"]
+        current_kp = analysis.next_24h_forecast["median"].iloc[0]
+        status, _, color = self.get_status_level_color(current_kp)
+
+        max_values = analysis["max_df"]
+        time_diff = np.ceil((max_values.idxmax() - self.current_utc_time).total_seconds() / 3600)
+
+        prob_at_time = 24  # hours
+        target_time = self.current_utc_time + pd.Timedelta(hours=prob_at_time)
+        nearest_idx = probability_df.index.get_indexer([target_time], method="bfill")[0]
+        prob_value = probability_df.iloc[nearest_idx]["Probability"]
+
+        message = f"""<html><body>
+                    <h2><strong>SPACE WEATHER ALERT - Kp Index &ge; {self.kp_threshold_str} Predicted</strong></h2>
+                    <h3><strong>ALERT SUMMARY</strong></h3>
+                    <ul>
+                        <li><strong>Current Status: <span style="color: {color};">  {status}</span> </strong></li>
+                        <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
+                        <li><strong>Maximum Kp for next {time_diff} hours:</strong> {DECIMAL_TO_KP[np.round(max_values.max(), 2)]}</li>
+                        <li><strong>{prob_value * 100:.2f}% Probability of Kp &ge; {self.kp_threshold_str} in next {prob_at_time} hours</strong></li>
+                    </ul>
+                    <h3><strong>HIGH Kp INDEX PERIODS Predicted (Kp &ge; {self.kp_threshold_str})</strong></h3>
+                    <ul>
+                    """
+
+        message += self._kp_html_table(high_records, probability_df)
+        message += "</tbody></table>\n"
+        message += '<br><img src="cid:forecast_image" style="max-width:100%;">'
+        AURORA_KP = 6.33
+        high_records_above_threshold = high_records[
+            (high_records["minimum"].astype(float) >= AURORA_KP)
+            | (high_records["median"].astype(float) >= AURORA_KP)
+            | (high_records["maximum"].astype(float) >= AURORA_KP)
+        ]
+        message += "</ul>\n"
+        if not high_records_above_threshold.empty:
+            message += "<h3><strong>AURORA WATCH:</strong></h3>\n"
+            message += f"<p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Note:</strong> Kp &ge; {DECIMAL_TO_KP[AURORA_KP]} indicate potential auroral activity at Berlin latitudes.\n"
+        message += """<h3 id="note_act"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[4]</sup></strong></h3><ul>"""
         message += self.get_storm_level_description_table()
         message += "</tbody></table>\n</ul>"
         message += self.footer()
