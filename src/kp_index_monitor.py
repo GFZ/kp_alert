@@ -522,8 +522,7 @@ class KpMonitor:
         bool
             True if check completed successfully, False otherwise
         """
-        self.logger.info("=" * 50)
-        self.logger.info("Starting Kp index monitoring check")
+        self.logger.info("Kp Index check")
         df = self.fetch_kp_data()
         if df is None:
             return False
