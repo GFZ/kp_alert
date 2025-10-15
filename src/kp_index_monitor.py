@@ -42,6 +42,25 @@ sys.excepthook = log_uncaught_exceptions
 
 @dataclass
 class AnalysisResults:
+    """
+    AnalysisResults containing analysis results with keys:
+
+    Parameters
+    ----------
+    max_kp : float
+        Maximum Kp value in current forecast
+    threshold_exceeded: bool
+        Boolean indicating if threshold exceeded
+    high_kp_records : pd.DataFrame
+        Records above alert threshold
+    next_24h_forecast : pd.DataFrame
+        Forecast for next 24 hours
+    alert_worthy : bool
+        Boolean indicating if alert should be sent
+    probability_df : pd.DataFrame
+        DataFrame containing probability of Kp exceeding threshold
+    """
+
     max_kp: float
     max_df: pd.Series
     threshold_exceeded: bool
@@ -114,7 +133,8 @@ class KpMonitor:
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             handlers=[
                 logging.FileHandler(
-                    self.log_folder / f"kp_monitor_{self.log_suffix}_{datetime.now(timezone.utc).strftime('%Y%d%m')}.log"
+                    self.log_folder
+                    / f"kp_monitor_{self.log_suffix}_{datetime.now(timezone.utc).strftime('%Y%d%m')}.log"
                 ),
                 logging.StreamHandler(),
             ],
@@ -156,13 +176,8 @@ class KpMonitor:
 
         Returns
         -------
-        AnalysisResults
-            AnalysisResults containing analysis results with keys:
-            - max_kp: Maximum Kp value in current forecast
-            - threshold_exceeded: Boolean indicating if threshold exceeded
-            - high_kp_records: Records above alert threshold
-            - next_24h_forecast: Forecast for next 24 hours
-            - alert_worthy: Boolean indicating if alert should be sent
+        `AnalysisResults`
+            `AnalysisResults` containing analysis results with keys as described in the `AnalysisResults` dataclass
         """
         try:
             # Get current maximum values
