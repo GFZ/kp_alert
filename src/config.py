@@ -133,7 +133,7 @@ class MonitorConfig:
         # Validate log file path
         if not self.log_folder:
             errors.append("log_folder cannot be empty")
-        
+
         if not isinstance(self.debug_with_swpc, bool):
             errors.append("debug_with_swpc must be a boolean value")
 
