@@ -21,7 +21,7 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -289,7 +289,7 @@ class KpMonitor:
 
         return prev_message
 
-    def create_alert_message(self, analysis: AnalysisResults) -> str:
+    def create_alert_message_and_subject(self, analysis: AnalysisResults) -> Tuple[str, str]:
         """
         Create formatted alert message for high Kp conditions.
 
@@ -300,8 +300,8 @@ class KpMonitor:
 
         Returns
         -------
-        str
-            Formatted HTML alert message s944059tring ready for email
+        Tuple[str, str]
+            Tuple containing (message, subject) for the alert email
         """
         high_records = analysis["high_kp_records"]
         probability_df = analysis["probability_df"]
@@ -350,7 +350,12 @@ class KpMonitor:
         message += self.footer()
         message += "</body></html>"
 
-        return message.strip()
+        _, level_min, _ = self.get_status_level_color(analysis["high_kp_records"]["minimum"].max())
+        _, level_max, _ = self.get_status_level_color(analysis["high_kp_records"]["maximum"].max())
+
+        subject = f"Predicted Geomagnetic Activity from {level_min} - {level_max}"
+
+        return message.strip(), subject.strip()
 
     def get_storm_level_description_table(self) -> str:
         table_html = ""
@@ -509,10 +514,8 @@ class KpMonitor:
 
         if self.should_send_alert(analysis):
             max_kp = analysis["max_kp"]
-            subject = (
-                f"SPACE WEATHER ALERT: Kp Index {DECIMAL_TO_KP[analysis['high_kp_records']['maximum'].max()]} Predicted"
-            )
-            message = self.create_alert_message(analysis)
+
+            message, subject = self.create_alert_message_and_subject(analysis)
 
             email_sent = self.send_alert(subject, message)
             _ = self.copy_image()
