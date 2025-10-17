@@ -117,6 +117,14 @@ class KpMonitor:
         self.setup_logging()
 
     def copy_image(self) -> str:
+        """
+        Copies the appropriate Kp forecast image to the current directory.
+
+        Returns
+        -------
+        str
+            Path to the copied image file.
+        """
         if self.debug_with_swpc:
             return shutil.copy2(self.IMAGE_PATH_SWPC, "./kp_swift_ensemble_with_swpc_LAST.png")
         return shutil.copy2(self.IMAGE_PATH, "./kp_swift_ensemble_LAST.png")
@@ -583,8 +591,9 @@ def main(
     if len(selected) == 0:
         raise typer.BadParameter("One of --once, --continuous, or --test must be specified")
     if len(selected) > 1:
-        raise typer.BadParameter("Options --once, --continuous, and --test are mutually exclusive i.e., only one can be selected.")
-
+        raise typer.BadParameter(
+            "Options --once, --continuous, and --test are mutually exclusive i.e., only one can be selected."
+        )
 
     config = MonitorConfig.from_yaml()
     log_suffix = "once" if once else "continuous" if continuous else "test"
