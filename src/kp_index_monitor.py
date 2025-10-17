@@ -9,7 +9,6 @@ Data Source: GFZ German Research Centre for Geosciences
 
 """
 
-import argparse
 import logging
 import re
 import shutil
@@ -26,6 +25,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import typer
 
 from src.config import MonitorConfig
 
@@ -567,38 +567,42 @@ class KpMonitor:
                 time.sleep(300)
 
 
-def main():
+app = typer.Typer(help="Kp Index Space Weather Monitor", add_completion=False)
+
+
+@app.command()
+def main(
+    once: bool = typer.Option(False, "--once", help="Run single check and exit"),
+    continuous: bool = typer.Option(False, "--continuous", help="Run continuous monitoring"),
+    test: bool = typer.Option(False, "--test", help="Test email functionality"),
+):
     """
     Main function with command line interface.
     """
+    selected = [flag for flag in (once, continuous, test) if flag]
+    if len(selected) == 0:
+        raise typer.BadParameter("One of --once, --continuous, or --test must be specified")
+    if len(selected) > 1:
+        raise typer.BadParameter("Options --once, --continuous, and --test are mutually exclusive i.e., only one can be selected.")
 
-    parser = argparse.ArgumentParser(description="Kp Index Space Weather Monitor")
-    group = parser.add_mutually_exclusive_group(required=True)
-
-    group.add_argument("--once", action="store_true", help="Run single check and exit")
-    group.add_argument("--continuous", action="store_true", help="Run continuous monitoring")
-    group.add_argument("--test", action="store_true", help="Test email functionality")
-
-    args = parser.parse_args()
 
     config = MonitorConfig.from_yaml()
-    log_suffix = "once" if args.once else "continuous" if args.continuous else "test"
+    log_suffix = "once" if once else "continuous" if continuous else "test"
     monitor = KpMonitor(config, log_suffix=log_suffix)
 
-    if args.test:
+    if test:
         subject = "Kp Monitor Test Email"
         message = "This is a test email from the Kp Index Monitoring System."
-
         logging.info("Testing email functionality...")
         success = monitor.send_alert(subject, message)
         logging.info(f"Summary email: {'SUCCESS' if success else 'FAILED'}")
 
-    elif args.once:
+    elif once:
         monitor.run_single_check()
 
-    elif args.continuous:
+    elif continuous:
         monitor.run_continuous_monitoring()
 
 
 if __name__ == "__main__":
-    main()
+    app()
