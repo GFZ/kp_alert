@@ -325,13 +325,15 @@ class KpMonitor:
                         <li><strong>Maximum Kp for next {time_diff} hours:</strong> {DECIMAL_TO_KP[np.round(max_values.max(), 2)]}</li>
                         <li><strong>{prob_value * 100:.0f}% Probability of Kp &ge; {self.kp_threshold_str} in next {prob_at_time} hours</strong></li>
                     </ul>
+                    """
+
+        message += '<ul><br><img src="cid:forecast_image" style="max-width:100%;"></ul>'
+        message += f"""
                     <h3><strong>HIGH Kp INDEX PERIODS Predicted (Kp &ge; {self.kp_threshold_str})</strong></h3>
                     <ul>
                     """
-
         message += self._kp_html_table(high_records, probability_df)
         message += "</tbody></table>\n"
-        message += '<br><img src="cid:forecast_image" style="max-width:100%;">'
         AURORA_KP = 6.33
         high_records_above_threshold = high_records[
             (high_records["minimum"].astype(float) >= AURORA_KP)
