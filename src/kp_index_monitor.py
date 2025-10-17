@@ -505,6 +505,7 @@ class KpMonitor:
             message = self.create_alert_message(analysis)
 
             email_sent = self.send_alert(subject, message)
+            _ = self.copy_image()
             message_for_file = message.replace("cid:forecast_image", self.LOCAL_IMAGE_PATH)
             with open("index.html", "w") as f:
                 f.write(message_for_file)
