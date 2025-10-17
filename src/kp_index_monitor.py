@@ -321,7 +321,7 @@ class KpMonitor:
                     <h3><strong>ALERT SUMMARY</strong></h3>
                     <ul>
                         <li><strong>Current Status: <span style="color: {color};">  {status}</span> </strong></li>
-                        <li><strong>Alert Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
+                        <li><strong>Alert sent at: </strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
                         <li><strong>Maximum Kp for next {time_diff} hours:</strong> {DECIMAL_TO_KP[np.round(max_values.max(), 2)]}</li>
                         <li><strong>{prob_value * 100:.0f}% Probability of Kp &ge; {self.kp_threshold_str} in next {prob_at_time} hours</strong></li>
                     </ul>
