@@ -273,58 +273,6 @@ class KpMonitor:
 
         return prev_message
 
-    def create_summary_message(self, analysis: AnalysisResults) -> str:
-        """
-        Create formatted summary message for current Kp Index conditions.
-
-        Parameters
-        ----------
-        analysis : AnalysisResults
-            AnalysisResults containing analysis results from analyze_kp_data
-
-        Returns
-        -------
-        str
-            Formatted HTML summary message string ready for email
-        """
-        next_24h = analysis["next_24h_forecast"]
-        probability_df = analysis["probability_df"]
-        max_values = analysis["max_df"]
-        time_diff = np.ceil((max_values.idxmax() - self.current_utc_time).total_seconds() / 3600)
-
-        prob_at_time = 24  # hours
-        target_time = self.current_utc_time + pd.Timedelta(hours=prob_at_time)
-        nearest_idx = probability_df.index.get_indexer([target_time], method="bfill")[0]
-        prob_value = probability_df.iloc[nearest_idx]["Probability"]
-
-        current_kp = analysis.next_24h_forecast["median"].iloc[0]
-        status, _, color = self.get_status_level_color(current_kp)
-        message = f"""<html><body>
-        <h2><strong>SPACE WEATHER - Geomagentic Activity Summary Report</strong></h2>
-
-        <h3><strong>CURRENT STATUS:</strong> <span style="color: {color};">  {status}</span></h3>
-        <ul>
-            <li><strong>Report Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
-            <li><strong>Maximum Kp for {time_diff} hours window:</strong> {DECIMAL_TO_KP[np.round(max_values.max(), 2)]}</li>
-            <li><strong>{prob_value * 100:.2f}% Probability of Kp &ge; {self.kp_threshold_str} in next {prob_at_time} hours</strong></li>
-        </ul>
-
-        <h3><strong>NEXT 24 HOURS FORECAST:</strong></h3>
-        <ul>
-        """
-
-        message += self._kp_html_table(next_24h, probability_df)
-
-        message += "</tbody></table>\n"
-        message += '<br><img src="cid:forecast_image" style="max-width:100%;">'
-        message += """</ul><h3 id="note_act"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[4]</sup></strong></h3><ul>"""
-        message += self.get_storm_level_description_table()
-        message += "</tbody></table>\n</ul>"
-        message += self.footer()
-        message += "</body></html>"
-
-        return message.strip()
-
     def create_alert_message(self, analysis: AnalysisResults) -> str:
         """
         Create formatted alert message for high Kp conditions.
@@ -337,7 +285,7 @@ class KpMonitor:
         Returns
         -------
         str
-            Formatted HTML alert message string ready for email
+            Formatted HTML alert message s944059tring ready for email
         """
         high_records = analysis["high_kp_records"]
         probability_df = analysis["probability_df"]
@@ -563,43 +511,6 @@ class KpMonitor:
 
         return True
 
-    def send_summary_email(self) -> bool:
-        """
-        Fetch current data and send summary email to configured recipients.
-
-        Generates and sends a comprehensive summary of current Kp conditions
-        and 24-hour forecast to all configured email recipients.
-
-        Returns
-        -------
-        bool
-            True if email sent successfully, False otherwise
-        """
-        recipients = self.config.recipients
-        self.logger.info("Generating Kp summary")
-
-        df = self.fetch_kp_data()
-        if df is None:
-            self.logger.error("Failed to fetch data for summary")
-            return False
-        analysis = self.analyze_kp_data(df)
-        subject = f"Space Weather Summary Report - Current Median Kp: {DECIMAL_TO_KP[analysis.next_24h_forecast['median'].iloc[0]]}"
-        message = self.create_summary_message(analysis)
-
-        message_for_file = message.replace("cid:forecast_image", self.LOCAL_IMAGE_PATH)
-        with open("index.html", "w") as f:
-            f.write(message_for_file)
-
-        try:
-            self.construct_and_send_email(recipients, subject, message)
-
-            self.logger.info(f"Summary mail sent successfully to {len(recipients)} recipients")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Error sending mail: {e}", exc_info=True)
-            return False
-
     def construct_and_send_email(self, recipients: list[str], subject: str, message: str) -> None:
         # root message as multipart/related
         msg_root = MIMEMultipart("related")
@@ -655,31 +566,6 @@ class KpMonitor:
                 self.logger.error(f"Error in monitoring loop: {e}", exc_info=True)
                 time.sleep(300)
 
-    def run_continuous_summary(self) -> None:
-        """
-        Run continuous summary email sending at specified intervals.
-
-        Sends summary emails at configured intervals indefinitely.
-        Can be stopped with Ctrl+C (KeyboardInterrupt).
-        """
-        self.logger.info("Starting continuous Kp index summary emailing")
-        self.logger.info(f"Summary interval: {self.config.check_interval_hours} hours")
-
-        while True:
-            try:
-                self.send_summary_email()
-
-                sleep_seconds = self.config.check_interval_hours * 3600
-                self.logger.info(f"Waiting {self.config.check_interval_hours} hours until next summary...")
-                time.sleep(sleep_seconds)
-
-            except KeyboardInterrupt:
-                self.logger.info("Summary emailing stopped by user")
-                break
-            except Exception as e:
-                self.logger.error(f"Error in summary emailing loop: {e}", exc_info=True)
-                time.sleep(300)
-
 
 def main():
     """
@@ -693,13 +579,10 @@ def main():
     group.add_argument("--continuous", action="store_true", help="Run continuous monitoring")
     group.add_argument("--test", action="store_true", help="Test email functionality")
 
-    parser.add_argument("--summary", action="store_true", help="Send summary email (works with --continuous)")
-
     args = parser.parse_args()
 
     config = MonitorConfig.from_yaml()
-    log_suffix = "summary" if args.summary else "alert"
-    log_suffix += "_once" if args.once else "_continuous" if args.continuous else "_test"
+    log_suffix = "once" if args.once else "continuous" if args.continuous else "test"
     monitor = KpMonitor(config, log_suffix=log_suffix)
 
     if args.test:
@@ -711,16 +594,10 @@ def main():
         logging.info(f"Summary email: {'SUCCESS' if success else 'FAILED'}")
 
     elif args.once:
-        if args.summary:
-            monitor.send_summary_email()
-        else:
-            monitor.run_single_check()
+        monitor.run_single_check()
 
     elif args.continuous:
-        if args.summary:
-            monitor.run_continuous_summary()
-        else:
-            monitor.run_continuous_monitoring()
+        monitor.run_continuous_monitoring()
 
 
 if __name__ == "__main__":
