@@ -5,3 +5,4 @@ recipients: [email1@email.com, email2@email.com]
 
 log_folder: "./kp_index_monitor"
 log_level: "INFO"
+debug_with_swpc: false
