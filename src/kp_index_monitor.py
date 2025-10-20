@@ -16,15 +16,16 @@ import smtplib
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import pandas as pd
+import requests
 import typer
 
 from src.config import MonitorConfig
@@ -227,7 +228,6 @@ class KpMonitor:
 
     def footer(self) -> str:
         return f"""
-            <p><strong>DATA SOURCE:</strong> <a href='https://spaceweather.gfz-potsdam.de/'> https://spaceweather.gfz-potsdam.de/</a></p>
             <p><em>This is an automated alert from the Kp Index Monitoring System using GFZ Space Weather Forecast.</em></p>
             <hr>
             <p style="font-size: 12px; color: #888;">
@@ -289,7 +289,47 @@ class KpMonitor:
 
         return prev_message
 
-    def create_alert_message_and_subject(self, analysis: AnalysisResults) -> Tuple[str, str]:
+    def get_observed_kp(self, start: pd.Timestamp) -> Optional[float]:
+        """
+        Fetch observed Kp index data from GFZ API.
+
+        Parameters
+        ----------
+        start : pd.Timestamp
+            Start time for fetching observed Kp data
+
+        Returns
+        -------
+        Optional[float]
+            Observed Kp index value
+
+        """
+        try:
+            for _ in range(2):
+                start_date_str = start.strftime("%Y-%m-%dT%H:%M:%SZ")
+                end_date_str = (start + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                url = f"https://kp.gfz.de/app/json/?start={start_date_str}&end={end_date_str}&index=Kp"
+
+                self.logger.info(f"Fetching observed Kp data from {start_date_str} to {end_date_str}")
+
+                response = requests.get(url)
+                response.raise_for_status()
+
+                data = response.json()
+                if len(data["Kp"]) == 0:
+                    start -= timedelta(hours=3)
+                    self.logger.warning(f"No observed Kp data found for {start_date_str}, shifting 3 hours back")
+                else:
+                    return data["Kp"][0]
+
+            self.logger.warning("No observed Kp data found after shifting 3 hours back, returning empty data")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Error fetching observed Kp data: {e}", exc_info=True)
+            return None
+
+    def create_message(self, analysis: AnalysisResults) -> str:
         """
         Create formatted alert message for high Kp conditions.
 
@@ -300,8 +340,8 @@ class KpMonitor:
 
         Returns
         -------
-        Tuple[str, str]
-            Tuple containing (message, subject) for the alert email
+        message : str
+            Formatted HTML alert message
         """
         high_records = analysis["high_kp_records"]
         probability_df = analysis["probability_df"]
@@ -309,27 +349,56 @@ class KpMonitor:
         status, _, color = self.get_status_level_color(current_kp)
 
         max_values = analysis["max_df"]
-        time_diff = np.ceil((max_values.idxmax() - self.current_utc_time).total_seconds() / 3600)
 
         prob_at_time = 24  # hours
         target_time = self.current_utc_time + pd.Timedelta(hours=prob_at_time)
         nearest_idx = probability_df.index.get_indexer([target_time], method="bfill")[0]
         prob_value = probability_df.iloc[nearest_idx]["Probability"]
 
+        threshold_status, threshold_level, _ = self.get_status_level_color(self.config.kp_alert_threshold)
+
+        max_kp_at_finite_time = np.round(max_values.max(), 2)
+
+        max_kp_at_finite_time_status, _, _ = self.get_status_level_color(max_kp_at_finite_time)
+
+        mask = probability_df["Probability"] >= 0.4
+        if mask.any():
+            start_time = probability_df.index[mask][0]
+            end_time = probability_df.index[mask][-1]
+        else:
+            start_time = probability_df.index[0]
+            end_time = probability_df.index[nearest_idx]
+
+        observed_kp = self.get_observed_kp(analysis.next_24h_forecast.index[0])
+
+        if observed_kp is not None:
+            observed_status, _, _ = self.get_status_level_color(observed_kp)
+        else:
+            observed_status = "DATA NOT AVAILABLE YET"
+
+        start_time_kp_min_status, _, _ = self.get_status_level_color(high_records.loc[start_time]["minimum"].min())
+        end_time_kp_max_status, _, _ = self.get_status_level_color(high_records.loc[end_time]["maximum"].max())
+
         message = f"""<html><body>
-                    <h2><strong>SPACE WEATHER ALERT - Kp Index &ge; {self.kp_threshold_str} Predicted</strong></h2>
-                    <h3><strong>ALERT SUMMARY</strong></h3>
+            <h1><strong>SPACE WEATHER ALERT - {threshold_status} ({threshold_level}) Predicted</strong></h1>
+            <h3>From {start_time.strftime("%Y-%m-%d %H:%M")} UTC to {end_time.strftime("%Y-%m-%d %H:%M")} UTC, Kp is expected to be above {self.config.kp_alert_threshold} ({threshold_level}) with &ge; {prob_value * 100:.0f}% probability with {start_time_kp_min_status.replace("CONDITIONS", "")} to {end_time_kp_max_status}.</h3>
+            <h3>Current Predicted Conditions: {status}<br>
+            Current Observed Conditions: {observed_status}</h3>
+
+                    <h2><strong>ALERT SUMMARY</strong></h2>
+                    <h3>
                     <ul>
-                        <li><strong>Current Status: <span style="color: {color};">  {status}</span> </strong></li>
+                        <li><strong>Current Conditions: <span style="color: {color};">  {status}</span> </strong></li>
                         <li><strong>Alert sent at: </strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
-                        <li><strong>Maximum Kp for next {time_diff} hours:</strong> {DECIMAL_TO_KP[np.round(max_values.max(), 2)]}</li>
-                        <li><strong>{prob_value * 100:.0f}% Probability of Kp &ge; {self.kp_threshold_str} in next {prob_at_time} hours</strong></li>
+                        <li><strong>Maximum Kp &ge; {DECIMAL_TO_KP[max_kp_at_finite_time]} with {max_kp_at_finite_time_status} may occur </strong> {max_values.idxmax().strftime("%Y-%m-%d %H:%M")} UTC onwards </li>
+                        <li><strong>{prob_value * 100:.0f}% Probability of {threshold_status} in next {prob_at_time} hours</strong></li>
                     </ul>
+                    </h3>
                     """
 
         message += '<ul><br><img src="cid:forecast_image" style="max-width:100%;"></ul>'
         message += f"""
-                    <h3><strong>HIGH Kp INDEX PERIODS Predicted (Kp &ge; {self.kp_threshold_str})</strong></h3>
+                    <h2><strong>HIGH Kp INDEX PERIODS Predicted (Kp &ge; {threshold_level})</strong></h2>
                     <ul>
                     """
         message += self._kp_html_table(high_records, probability_df)
@@ -342,20 +411,35 @@ class KpMonitor:
         ]
         message += "</ul>\n"
         if not high_records_above_threshold.empty:
-            message += "<h3><strong>AURORA WATCH:</strong></h3>\n"
+            message += "<h2><strong>AURORA WATCH:</strong></h2>\n"
             message += f"<p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Note:</strong> Kp &ge; {DECIMAL_TO_KP[AURORA_KP]} indicate potential auroral activity at Berlin latitudes.\n"
-        message += """<h3 id="note_act2"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[5]</sup></strong></h3><ul>"""
+        message += """<h2 id="note_act2"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[5]</sup></strong></h2><ul>"""
         message += self.get_storm_level_description_table()
         message += "</tbody></table>\n</ul>"
         message += self.footer()
         message += "</body></html>"
 
+        return message.strip()
+
+    def create_subject(self, analysis: AnalysisResults) -> str:
+        """
+        Create email subject line based on analysis results.
+
+        Parameters
+        ----------
+        analysis : `AnalysisResults`
+            `AnalysisResults` containing analysis results from analyze_kp_data
+
+        Returns
+        -------
+        subject : str
+            Email subject line
+        """
         _, level_min, _ = self.get_status_level_color(analysis["high_kp_records"]["minimum"].max())
         _, level_max, _ = self.get_status_level_color(analysis["high_kp_records"]["maximum"].max())
 
         subject = f"Predicted Geomagnetic Activity from {level_min} - {level_max}"
-
-        return message.strip(), subject.strip()
+        return subject.strip()
 
     def get_storm_level_description_table(self) -> str:
         table_html = ""
@@ -485,11 +569,10 @@ class KpMonitor:
         """
         if not analysis["alert_worthy"]:
             return False
-        # # Avoid sending multiple alerts for the same high Kp period
         current_time = pd.Timestamp.now(tz="UTC")
         if self.last_alert_time:
             time_since_last_alert = (current_time - self.last_alert_time).total_seconds() / 3600
-            if time_since_last_alert < 6:  # Don't send alerts more than once every 6 hours
+            if time_since_last_alert < 6:
                 self.logger.warning("Skipping alert - too soon since last alert")
                 return False
 
@@ -515,7 +598,8 @@ class KpMonitor:
         if self.should_send_alert(analysis):
             max_kp = analysis["max_kp"]
 
-            message, subject = self.create_alert_message_and_subject(analysis)
+            message = self.create_message(analysis)
+            subject = self.create_subject(analysis)
 
             email_sent = self.send_alert(subject, message)
             _ = self.copy_image()
@@ -534,6 +618,17 @@ class KpMonitor:
         return True
 
     def construct_and_send_email(self, recipients: list[str], subject: str, message: str) -> None:
+        """Construct and send an email with HTML content and embedded image.
+
+        Parameters
+        ----------
+        recipients : list[str]
+            List of recipient email addresses
+        subject : str
+            Email subject line
+        message : str
+            Email message content (HTML formatted)
+        """
         # root message as multipart/related
         msg_root = MIMEMultipart("related")
         msg_root["From"] = "pager"
@@ -596,31 +691,23 @@ app = typer.Typer(help="Kp Index Space Weather Monitor", add_completion=False)
 def main(
     once: bool = typer.Option(False, "--once", help="Run single check and exit"),
     continuous: bool = typer.Option(False, "--continuous", help="Run continuous monitoring"),
-    test: bool = typer.Option(False, "--test", help="Test email functionality"),
 ):
     """
     Main function with command line interface.
     """
-    selected = [flag for flag in (once, continuous, test) if flag]
+    selected = [flag for flag in (once, continuous) if flag]
     if len(selected) == 0:
-        raise typer.BadParameter("One of --once, --continuous, or --test must be specified")
+        raise typer.BadParameter("One of --once or --continuous must be specified")
     if len(selected) > 1:
         raise typer.BadParameter(
-            "Options --once, --continuous, and --test are mutually exclusive i.e., only one can be selected."
+            "Options --once and --continuous are mutually exclusive i.e., only one can be selected."
         )
 
     config = MonitorConfig.from_yaml()
-    log_suffix = "once" if once else "continuous" if continuous else "test"
+    log_suffix = "once" if once else "continuous"
     monitor = KpMonitor(config, log_suffix=log_suffix)
 
-    if test:
-        subject = "Kp Monitor Test Email"
-        message = "This is a test email from the Kp Index Monitoring System."
-        logging.info("Testing email functionality...")
-        success = monitor.send_alert(subject, message)
-        logging.info(f"Summary email: {'SUCCESS' if success else 'FAILED'}")
-
-    elif once:
+    if once:
         monitor.run_single_check()
 
     elif continuous:
