@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A Python-based monitoring system that tracks the Kp geomagnetic index from GFZ Potsdam and sends automated email alerts"
 readme = "README.md"
 authors = [
-    { name = "Sahil Jhawar, Infant Ronald Reagan Johnson Amalraj", email = "sec15@gfz.de" },
+    { name = "Sahil Jhawar, Infant Ronald Reagan Johnson Amalraj", email = "jhawar@gfz.de" },
 ]
 classifiers = [
     "Intended Audience :: Science/Research",
