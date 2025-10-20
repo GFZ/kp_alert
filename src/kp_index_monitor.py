@@ -388,7 +388,6 @@ class KpMonitor:
                     <h2><strong>ALERT SUMMARY</strong></h2>
                     <h3>
                     <ul>
-                        <li><strong>Current Conditions: <span style="color: {color};">  {status}</span> </strong></li>
                         <li><strong>Alert sent at: </strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
                         <li><strong>Maximum Kp &ge; {DECIMAL_TO_KP[max_kp_at_finite_time]} with {max_kp_at_finite_time_status} may occur </strong> {max_values.idxmax().strftime("%Y-%m-%d %H:%M")} UTC onwards </li>
                         <li><strong>{prob_value * 100:.0f}% Probability of {threshold_status} in next {prob_at_time} hours</strong></li>
