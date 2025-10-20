@@ -4,32 +4,48 @@ A Python-based monitoring system that tracks the Kp geomagnetic index from GFZ P
 
 ## Features
 
-- **Real-time monitoring** of Kp geomagnetic index from GFZ data
+- **Real-time monitoring** of Kp geomagnetic index from GFZ ensemble forecast data
 - **Configurable alert thresholds** with YAML-based configuration
-- **Email notifications** via local SMTP (Linux mail system)
-- **Multiple operation modes**: single check, continuous monitoring, summary reports
-- **Comprehensive logging** with configurable levels
+- **Email notifications** via local SMTP with HTML formatting and embedded forecast images
+- **Multiple operation modes**: single check (`--once`) and continuous monitoring (`--continuous`)
+- **Comprehensive logging** with configurable levels and log folder management
 - **Smart alert management** to prevent spam (6-hour cooldown between alerts)
-- **HTML-formatted emails** with detailed space weather information
+- **Rich HTML emails** with detailed space weather information, probability tables, and forecast charts
+- **Aurora watch notifications** for Kp ≥ 6+ conditions
+- **NOAA scale integration** for geomagnetic storm classification
 
 ## Quick Start
 
-### 1. Install Dependencies
+## Installation
+
+### Option 1: Development Installation
 
 ```bash
+git clone https://github.com/GFZ/kp_alert.git
+cd kp_alert
 pip install -r requirements.txt
 ```
 
-### 2. Configure Settings
+### Option 2: Package Installation
 
-Copy `config.yaml.template ` to customize your monitoring setup:
+```bash
+pip install -e .
+```
 
-`cp config.yaml.template config.yaml`
+This installs the `kp-alert` command-line tool globally.
+
+### 1. Configure Settings
+
+Copy `config.yaml.template` to customize your monitoring setup:
+
+```bash
+cp config.yaml.template config.yaml
+```
 
 ```yaml
 # Alert settings
-kp_alert_threshold: 5.0 # Kp value to trigger alerts (0-9 scale)
-check_interval_hours: 3.0 # Hours between checks in continuous mode
+kp_alert_threshold: 6.0 # Kp value to trigger alerts (0-9 scale)
+check_interval_hours: 1 # Hours between checks in continuous mode
 
 # Email recipients
 recipients:
@@ -37,25 +53,14 @@ recipients:
   - "alerts@yourorg.com"
 
 # Logging configuration
-log_file: "kp_index_monitor.log"
+log_folder: "./logs" # Path to log folder
 log_level: "INFO" # DEBUG, INFO, WARNING, ERROR
+
+# Debug settings
+debug_with_swpc: false # Use SWPC overplot images if true
 ```
 
-### 3. Test the System
-
-First, test data fetching:
-
-```bash
-python -m src.kp_fetch_test.py
-```
-
-Then test email functionality:
-
-```bash
-python -m src.kp_index_monitor --test
-```
-
-### 4. Run Monitoring
+### 2. Run Monitoring
 
 **Single check:**
 
@@ -69,10 +74,11 @@ python -m src.kp_index_monitor --once
 python -m src.kp_index_monitor --continuous
 ```
 
-**Summary report:**
+**Using the installed command-line tool (after `pip install`):**
 
 ```bash
-python -m src.kp_index_monitor --summary
+kp-alert --once
+kp-alert --continuous
 ```
 
 ## Configuration
@@ -93,8 +99,9 @@ python -m src.kp_index_monitor --once
 | `kp_alert_threshold`   | float  | Kp value triggering alerts | 0.0 - 9.0                |
 | `check_interval_hours` | float  | Hours between checks       | > 0.0                    |
 | `recipients`           | list   | Email addresses for alerts | Valid email format       |
-| `log_file`             | string | Path to log file           | Valid file path          |
+| `log_folder`           | string | Path to log folder         | Valid directory path     |
 | `log_level`            | string | Logging verbosity          | DEBUG/INFO/WARNING/ERROR |
+| `debug_with_swpc`      | bool   | Use SWPC comparison images | true/false               |
 
 ### Example Configurations
 
@@ -104,8 +111,9 @@ python -m src.kp_index_monitor --once
 kp_alert_threshold: 4.0
 check_interval_hours: 1.0
 recipients: ["operations@station.gov"]
-log_file: "kp_monitor_station.log"
+log_folder: "./logs"
 log_level: "DEBUG"
+debug_with_swpc: false
 ```
 
 **Power Grid Monitoring (Critical Events Only):**
@@ -114,8 +122,9 @@ log_level: "DEBUG"
 kp_alert_threshold: 6.0
 check_interval_hours: 0.5
 recipients: ["grid-ops@utility.com", "duty-manager@utility.com"]
-log_file: "kp_monitor_grid.log"
+log_folder: "./logs_production"
 log_level: "INFO"
+debug_with_swpc: true
 ```
 
 ## Operation Modes
@@ -126,6 +135,8 @@ Run one monitoring check and exit:
 
 ```bash
 python -m src.kp_index_monitor --once
+# or
+kp-alert --once
 ```
 
 _Perfect for cron jobs or testing_
@@ -136,29 +147,11 @@ Run continuously with scheduled checks:
 
 ```bash
 python -m src.kp_index_monitor --continuous
+# or
+kp-alert --continuous
 ```
 
 _Ideal for dedicated monitoring servers_
-
-### Test Mode
-
-Test email functionality:
-
-```bash
-python -m src.kp_index_monitor --test
-```
-
-_Sends a test email to verify configuration_
-
-### Summary Email Mode
-
-Send current space weather summary:
-
-```bash
-python -m src.kp_index_monitor --summary
-```
-
-_Generates comprehensive status report_
 
 ## Email System Requirements
 
@@ -190,9 +183,17 @@ If you prefer external SMTP, modify the `send_alert()` method in `kp_index_monit
 ### Source Information
 
 - **Provider**: GFZ Helmholtz Centre for Geosciences
-- **URL**: https://spaceweather.gfz.de/fileadmin/Kp-Forecast/CSV/kp_product_file_FORECAST_PAGER_SWIFT_LAST.csv
+- **URL**: Internal GFZ data paths for ensemble forecast data
 - **Update Frequency**: Every 3 hours (GFZ updates their forecast data)
 - **Format**: CSV with ensemble forecast data
+
+### Data Paths Used
+
+The system accesses GFZ internal data paths:
+
+- **CSV Data**: `/PAGER/FLAG/data/published/products/Kp/kp_product_file_SWIFT_LAST.csv`
+- **Forecast Image**: `/PAGER/FLAG/data/published/kp_swift_ensemble_LAST.png`
+- **SWPC Comparison Image**: `/PAGER/FLAG/data/published/kp_swift_ensemble_with_swpc_LAST.png`
 
 ### Forecast Data Structure
 
@@ -220,8 +221,9 @@ The latest ensemble predictions contain the following information:
 
 #### Ensemble Members
 
-- **Individual ensemble members**: Indexed by \_i, where i is a progressive integer number
+- **Individual ensemble members**: Indexed as `kp_i`, where i is a progressive integer number
 - **Current ensemble size**: Varies between 12 and 20 members
+- **Used for probability calculations**: Percentage of ensemble members exceeding thresholds
 
 ## Alert System
 
@@ -239,10 +241,10 @@ The Kp index scale and corresponding geomagnetic storm levels:
 | Kp 8     | Severe Storm        | G4         | Widespread voltage control problems      |
 | Kp 9     | Extreme Storm       | G5         | Complete power system blackouts possible |
 
-### Sample Alert Email
-![alt text](assets/summary.png)
-### Sample Summary Email
-![alt text](assets/alert.png)
+### Sample Email
+
+[Sample Email](http://htmlpreview.github.io/?https://github.com/GFZ/kp_alert/blob/main/assets/index.html)
+
 ## Server Deployment
 
 ### Using Cron for Automation
@@ -252,11 +254,11 @@ Add to crontab for automatic execution:
 ```bash
 crontab -e
 
-# Run single check every 3 hours
-0 */3 * * * cd /path/to/kp_alert && /usr/bin/python3 -m src.kp_index_monitor --once
+# Run single check every hour
+0 * * * * cd /path/to/kp_alert && /usr/bin/python3 -m src.kp_index_monitor --once
 
-# Daily summary at 8 AM
-0 8 * * * cd /path/to/kp_alert && /usr/bin/python3 -m src.kp_index_monitor --summary
+# Or using the installed command
+0 * * * * cd /path/to/kp_alert && kp-alert --once
 ```
 
 ### As a Systemd Service
@@ -272,7 +274,7 @@ After=network.target
 Type=simple
 User=kp-monitor
 WorkingDirectory=/opt/kp-alert
-ExecStart=/usr/bin/python3 /opt/kp-alert/src/kp_index_monitor.py --continuous
+ExecStart=/usr/bin/python3 -m src.kp_index_monitor --continuous
 Restart=always
 RestartSec=300
 Environment=KP_MONITOR_CONFIG=/opt/kp-alert/config.yaml
@@ -293,25 +295,13 @@ sudo systemctl status kp-monitor
 
 ### Initial Setup Testing
 
-1. **Test data fetching**:
-
-   ```bash
-   python -m src.kp_fetch_test
-   ```
-
-2. **Test email functionality**:
-
-   ```bash
-   python -m src.kp_index_monitor --test
-   ```
-
-3. **Run single monitoring check**:
+1. **Test single monitoring check**:
 
    ```bash
    python -m src.kp_index_monitor --once
    ```
 
-4. **Validate configuration**:
+2. **Validate configuration**:
    ```bash
    python -c "from src.config import MonitorConfig; config = MonitorConfig.from_yaml(); print('Configuration valid!')"
    ```
@@ -328,8 +318,8 @@ sudo systemctl status kp-monitor
 
 2. **Data fetch fails**:
 
-   - Check internet connectivity
-   - Verify GFZ website is accessible: `curl -I https://spaceweather.gfz.de/`
+   - Check GFZ internal network connectivity
+   - Verify access to internal data paths
    - Check logs for specific error messages
 
 3. **Configuration errors**:
@@ -345,17 +335,17 @@ sudo systemctl status kp-monitor
 
 #### Log Files
 
-Monitor system activity:
+Monitor system activity with timestamped log files:
 
 ```bash
-# Watch real-time logs
-tail -f kp_index_monitor.log
+# Watch real-time logs (adjust date as needed)
+tail -f ./logs/kp_monitor_once_20251510.log
 
 # Check for errors
-grep ERROR kp_index_monitor.log
+grep ERROR ./logs/kp_monitor_*.log
 
 # View recent activity
-tail -50 kp_index_monitor.log
+tail -50 ./logs/kp_monitor_*.log
 ```
 
 ### Configuration Validation
@@ -376,21 +366,6 @@ Error messages will indicate specific validation failures.
 - **Service accounts**: Use dedicated user accounts for production deployment
 - **Log management**: Monitor log files and implement log rotation
 - **Network security**: Firewall rules for production servers
-- **Environment variables**: Use `KP_MONITOR_CONFIG` for sensitive deployments
-
-## Advanced Configuration
-
-### Multiple Alert Thresholds
-
-You can run multiple instances with different thresholds:
-
-```bash
-# High-priority alerts (severe storms only)
-KP_MONITOR_CONFIG=config_critical.yaml python -m src.kp_index_monitor --continuous
-
-# Research alerts (all activity)
-KP_MONITOR_CONFIG=config_research.yaml python -m src.kp_index_monitor --continuous
-```
 
 ## Development and Contribution
 
@@ -401,9 +376,10 @@ kp_alert/
 ├── src/
 │   ├── __init__.py           # Package initialization
 │   ├── config.py             # Configuration management with YAML support
-│   ├── kp_index_monitor.py   # Main monitoring application
-│   └── kp_fetch_test.py      # Data fetching test script
+│   └── kp_index_monitor.py   # Main monitoring application with typer CLI
 ├── config.yaml               # Main configuration file
+├── config.yaml.template      # Configuration template
+├── pyproject.toml            # Python project configuration
 ├── requirements.txt          # Python dependencies
 └── README.md                 # Documentation
 ```
@@ -414,38 +390,22 @@ kp_alert/
 - **Robust Error Handling**: Graceful handling of network and data issues
 - **Smart Alert Logic**: 6-hour cooldown to prevent alert spam
 - **Local SMTP**: No external credentials required
-
-### Contributing
-
-- Follow PEP 8 style guidelines
-- Add appropriate NumPy-style docstrings and comments
-- Test changes with both single and continuous modes
-- Update documentation for new features
-- Validate configuration changes with the test suite
-
-### Testing Framework
-
-```bash
-# Run all tests
-python -m src.kp_fetch_test.py
-python -m src.kp_index_monitor --test
-python -m src.kp_index_monitor --once
-
-# Configuration validation
-python -c "from src.config import MonitorConfig; MonitorConfig.from_yaml().validate()"
-```
+- **Rich HTML Emails**: Embedded forecast images and probability tables
+- **Aurora Notifications**: Special alerts for Kp ≥ 6+ conditions
+- **CLI Interface**: Typer-based command line interface with `--once` and `--continuous` modes
+- **Flexible Installation**: Can be installed as a pip package with `kp-alert` command
 
 ## License and Attribution
 
 This project is for educational and research purposes.
 
-**Data Attribution**: Space weather data provided by GFZ Helmholtz Centre for Geosciences (https://spaceweather.gfz.de/).
+**Data Attribution**: Kp data provided by GFZ Helmholtz Centre for Geosciences.
+
+**Authors**: Sahil Jhawar, Infant Ronald Reagan Johnson Amalraj
 
 ## Support
 
 For issues and questions:
 
-1. Check the troubleshooting section
-2. Review log files for error details
-3. Verify configuration settings
-4. Test individual components using provided test scripts
+- GitHub Issues:
+- Mail to the authors at (provided in `pyproject.toml`)
