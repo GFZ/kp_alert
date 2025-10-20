@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kp-alert"
+version = "0.1.0"
+description = "A Python-based monitoring system that tracks the Kp geomagnetic index from GFZ Potsdam and sends automated email alerts"
+readme = "README.md"
+authors = [
+    { name = "Sahil Jhawar, Infant Ronald Reagan Johnson Amalraj", email = "sec15@gfz.de" },
+]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+keywords = ["space weather", "kp index", "geomagnetic", "monitoring", "alerts"]
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.scripts]
+kp-alert = "src.kp_index_monitor:app"
+
+[project.urls]
+Homepage = "https://github.com/GFZ/kp_alert"
+Repository = "https://github.com/GFZ/kp_alert"
+Issues = "https://github.com/GFZ/kp_alert/issues"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
