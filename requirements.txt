@@ -2,3 +2,4 @@ pandas
 requests
 PyYAML
 typer
+ruff
