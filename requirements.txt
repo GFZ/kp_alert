@@ -3,3 +3,4 @@ requests
 PyYAML
 typer
 ruff
+markdown
