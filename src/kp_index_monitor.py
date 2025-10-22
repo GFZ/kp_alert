@@ -21,8 +21,9 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
+import markdown
 import numpy as np
 import pandas as pd
 import requests
@@ -227,66 +228,47 @@ class KpMonitor:
 
     def footer(self) -> str:
         return f"""
-            <p><em>This is an automated alert from the Kp Index Monitoring System using GFZ Space Weather Forecast.</em></p>
-            <hr>
-            <p style="font-size: 12px; color: #888;">
-            &copy; {datetime.now().year} GFZ Helmholtz Centre for Geosciences | GFZ Helmholtz-Zentrum für Geoforschung<br>
-            The data/data products are provided “as-is” without warranty of any kind either expressed or implied, including but not limited to the implied warranties of merchantability, correctness and fitness for a particular purpose. The entire risk as to the quality and performance of the Data/data products is with the Licensee.
+*This is an automated alert from the Kp Index Monitoring System using GFZ Space Weather Forecast.*
 
-            In no event will GFZ be liable for any damages direct, indirect, incidental, or consequential, including damages for any lost profits, lost savings, or other incidental or consequential damages arising out of the use or inability to use the data/data products.
+---
 
+<small>
+© {datetime.now().year} GFZ Helmholtz Centre for Geosciences | GFZ Helmholtz-Zentrum für Geoforschung  
+The data/data products are provided "as-is" without warranty of any kind either expressed or implied, including but not limited to the implied warranties of merchantability, correctness and fitness for a particular purpose. The entire risk as to the quality and performance of the Data/data products is with the Licensee.
+In no event will GFZ be liable for any damages direct, indirect, incidental, or consequential, including damages for any lost profits, lost savings, or other incidental or consequential damages arising out of the use or inability to use the data/data products.
+</small>
             """
 
     def _kp_html_table(self, record: pd.DataFrame, probabilities: pd.DataFrame) -> str:
-        prev_message = ""
-        prev_message += '<table style="border-collapse: collapse; margin: 5px 0; font-size: 16px;">\n'
-        prev_message += '<thead><tr style="background-color: #f0f0f0;">'
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; width: 120px; white-space: nowrap;">Time (UTC)</th>'
-        prev_message += f'<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 80px; white-space: nowrap;">Probability (Kp &ge; {self.kp_threshold_str})</th>'
-
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Min Kp Index<a href="#note_min"><sub>[1]</sub></a></th>'
-
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Max Kp Index<a href="#note_max"><sub>[2]</sub></a></th>'
-
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Median Kp Index<a href="#note_median"><sub>[3]</sub></a></th>'
-
-        prev_message += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Activity<a href="#note_act"><sub>[4]</sub></a><a href="#note_act2"><sub>[5]</sub></a></th>'
-        prev_message += "</tr></thead>\n<tbody>\n"
-
-        for _, record in record.iterrows():
-            kp_val_max = np.round(record["maximum"], 2)
-            kp_val_med = np.round(record["median"], 2)
-            kp_val_min = np.round(record["minimum"], 2)
+        """Generate markdown table for Kp index records."""
+        table = f"""
+| Time (UTC) | Probability (Kp ≥ {self.kp_threshold_str}) | Min Kp Index[^1] | Max Kp Index[^2] | Median Kp Index[^3] | Activity[^4][^5]|
+|------------|-------------------------------------------|------------------|------------------|---------------------|------------------|
+"""
+        for _, row in record.iterrows():
+            kp_val_max = np.round(row["maximum"], 2)
+            kp_val_med = np.round(row["median"], 2)
+            kp_val_min = np.round(row["minimum"], 2)
             _, level_min, color_min = self.get_status_level_color(kp_val_min)
             _, level_max, color_max = self.get_status_level_color(kp_val_max)
 
-            time_idx = record["Time (UTC)"]
+            time_idx = row["Time (UTC)"]
             prob = probabilities.loc[time_idx, "Probability"]
-            prev_message += "<tr>"
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{record["Time (UTC)"].strftime("%Y-%m-%d %H:%M")}</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{prob * 100:.0f}%</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_min]}</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_max]}</strong></td>'
-            prev_message += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{DECIMAL_TO_KP[kp_val_med]}</strong></td>'
-            prev_message += (
-                f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; font-weight: bold; white-space: nowrap;">'
-                f'<span style="color: {color_min};">{level_min}</span> - '
-                f'<span style="color: {color_max};">{level_max}</span>'
-                f"</td>"
-            )
 
-            prev_message += "</tr>\n"
-        prev_message += "</tbody></table>\n"
-        prev_message += """
-                        <div style="font-size: 14px; margin-top: 8px;">
-                            <p id="note_min"><b>[1]</b> Min Kp Index: Minimum value of Kp Ensembles</p>
-                            <p id="note_max"><b>[2]</b> Max Kp Index: Maximum value of Kp Ensembles</p>
-                            <p id="note_median"><b>[3]</b> Median Kp Index: Median value of Kp Ensembles</p>
-                            <p id="note_act"><b>[4]</b> Geomagnetic Activity Level based on Min-Max range</p>
-                        </div>
-                        """
+            time_str = row["Time (UTC)"].strftime("%Y-%m-%d %H:%M")
+            prob_str = f"{prob * 100:.0f}%"
+            activity_str = f'<span style="color: {color_min};">{level_min}</span> - <span style="color: {color_max};">{level_max}</span>'
 
-        return prev_message
+            table += f"| **{time_str}** | **{prob_str}** | **{DECIMAL_TO_KP[kp_val_min]}** | **{DECIMAL_TO_KP[kp_val_max]}** | **{DECIMAL_TO_KP[kp_val_med]}** | {activity_str} |\n"
+
+        table += """
+[^1]: Min Kp Index: Minimum value of Kp Ensembles
+[^2]: Max Kp Index: Maximum value of Kp Ensembles
+[^3]: Median Kp Index: Median value of Kp Ensembles
+[^4]: Geomagnetic Activity Level based on Min-Max range
+[^5]: See the GEOMAGNETIC ACTIVITY SCALE table
+"""
+        return table
 
     def get_observed_kp(self, start: pd.Timestamp) -> Tuple[str, float] | None:
         """
@@ -320,7 +302,7 @@ class KpMonitor:
                 data = response.json()
 
                 if len(data.get("Kp", [])) > 0:
-                    self.logger.info(f"Observed Kp data found for {data["datetime"][0]} : {data['Kp'][0]}")
+                    self.logger.info(f"Observed Kp data found for {data['datetime'][0]} : {data['Kp'][0]}")
                     return data["datetime"][0], data["Kp"][0]
 
                 else:
@@ -337,7 +319,7 @@ class KpMonitor:
 
     def create_message(self, analysis: AnalysisResults) -> str:
         """
-        Create formatted alert message for high Kp conditions.
+        Create formatted alert message for high Kp conditions using Markdown.
 
         Parameters
         ----------
@@ -347,7 +329,7 @@ class KpMonitor:
         Returns
         -------
         message : str
-            Formatted HTML alert message
+            Formatted Markdown alert message
         """
         high_records = analysis["high_kp_records"]
         probability_df = analysis["probability_df"]
@@ -397,44 +379,45 @@ class KpMonitor:
         else:
             obs_message_prefix = ""
 
-        message = f"""<html><body>
-            <h1><strong>SPACE WEATHER ALERT - {threshold_status} ({threshold_level}) Predicted</strong></h1>
-            <h3>{message_prefix} Kp is expected to be above {self.config.kp_alert_threshold} ({threshold_level}) with &ge; {prob_at_start_time * 100:.0f}% probability with {start_time_kp_min_status.replace("CONDITIONS", "")} to {end_time_kp_max_status}.</h3>
-            <h3>Current Predicted Conditions: {status}<br>
-            Current Observed Conditions: {observed_status} {obs_message_prefix}</h3>
+        message = f"""# **SPACE WEATHER ALERT - {threshold_status} ({threshold_level}) Predicted**
 
-                    <h2><strong>ALERT SUMMARY</strong></h2>
-                    <h3>
-                    <ul>
-                        <li><strong>Alert sent at: </strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
-                        <li><strong>Maximum Kp &ge; {DECIMAL_TO_KP[max_kp_at_finite_time]} with {max_kp_at_finite_time_status} may occur </strong> {max_values.idxmax().strftime("%Y-%m-%d %H:%M")} UTC onwards </li>
-                        <li><strong>{high_prob_value * 100:.0f}% Probability of {threshold_status} ({threshold_level}) within next {prob_at_time} hours</strong></li>
-                    </ul>
-                    </h3>
-                    """
+### {message_prefix} Kp is expected to be above {self.config.kp_alert_threshold} ({threshold_level}) with ≥ {prob_at_start_time * 100:.0f}% probability with {start_time_kp_min_status.replace("CONDITIONS", "")} to {end_time_kp_max_status}.
 
-        message += '<ul><br><img src="cid:forecast_image" style="max-width:100%;"></ul>'
-        message += f"""
-                    <h2><strong>HIGH Kp INDEX PERIODS Predicted (Kp &ge; {threshold_level})</strong></h2>
-                    <ul>
-                    """
+**Current Predicted Conditions:** {status.replace("CONDITIONS", "")}
+**Current Observed Conditions:** {observed_status.replace("CONDITIONS", "")} {obs_message_prefix}
+
+## **ALERT SUMMARY**
+
+- **Alert sent at:** {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC
+- **Maximum Kp ≥ {DECIMAL_TO_KP[max_kp_at_finite_time]} with {max_kp_at_finite_time_status} may occur** {max_values.idxmax().strftime("%Y-%m-%d %H:%M")} UTC onwards
+- **{high_prob_value * 100:.0f}% Probability of {threshold_status} ({threshold_level}) within next {prob_at_time} hours**
+
+![Forecast Image](cid:forecast_image)
+
+## **HIGH Kp INDEX PERIODS Predicted (Kp ≥ {threshold_level})**
+
+"""
         message += self._kp_html_table(high_records, probability_df)
-        message += "</tbody></table>\n"
+
         AURORA_KP = 6.33
         high_records_above_threshold = high_records[
             (high_records["minimum"].astype(float) >= AURORA_KP)
             | (high_records["median"].astype(float) >= AURORA_KP)
             | (high_records["maximum"].astype(float) >= AURORA_KP)
         ]
-        message += "</ul>\n"
+
         if not high_records_above_threshold.empty:
-            message += "<h2><strong>AURORA WATCH:</strong></h2>\n"
-            message += f"<p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Note:</strong> Kp &ge; {DECIMAL_TO_KP[AURORA_KP]} indicate potential auroral activity at Berlin latitudes.\n"
-        message += """<h2 id="note_act2"><strong>GEOMAGNETIC ACTIVITY SCALE<sup>[5]</sup></strong></h2><ul>"""
+            message += f"""
+## **AURORA WATCH:**
+
+**Note:** Kp ≥ {DECIMAL_TO_KP[AURORA_KP]} indicate potential auroral activity at Berlin latitudes.
+
+"""
+
+        message += """## GEOMAGNETIC ACTIVITY SCALE"""
         message += self.get_storm_level_description_table()
-        message += "</tbody></table>\n</ul>"
+        message += "\n"
         message += self.footer()
-        message += "</body></html>"
 
         return message.strip()
 
@@ -459,19 +442,12 @@ class KpMonitor:
         return subject.strip()
 
     def get_storm_level_description_table(self) -> str:
-        table_html = ""
-        table_html += '<table style="border-collapse: collapse; margin: 5px 0; font-size: 16px;">\n'
-        table_html += '<thead><tr style="background-color: #f0f0f0;">'
-        table_html += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; width: 120px; white-space: nowrap;">Level</th>'
-        table_html += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 60px; white-space: nowrap;">Kp Value</th>'
-        table_html += '<th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; width: 400px; white-space: nowrap;">Description</th>'
-        table_html += "</tr></thead>\n<tbody>\n"
-
-        G1 = "<a href='https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%201'>NOAA [G1]</a>"
-        G2 = "<a href='https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%202'>NOAA [G2]</a>"
-        G3 = "<a href='https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%203'>NOAA [G3]</a>"
-        G4 = "<a href='https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%204'>NOAA [G4]</a>"
-        G5 = "<a href='https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%205'>NOAA [G5]</a>"
+        """Generate markdown table for geomagnetic storm levels."""
+        G1 = "[NOAA [G1]](https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%201)"
+        G2 = "[NOAA [G2]](https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%202)"
+        G3 = "[NOAA [G3]](https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%203)"
+        G4 = "[NOAA [G4]](https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%204)"
+        G5 = "[NOAA [G5]](https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%205)"
 
         rows = [
             ("Quiet", "0-3", "Quiet conditions"),
@@ -483,15 +459,14 @@ class KpMonitor:
             ("Extreme Storm (G5)", "9", f"Widespread power system voltage control problems. For more details see {G5}"),
         ]
 
+        table = """
+| Level | Kp Value | Description |
+|-------|----------|-------------|
+"""
         for level, kp_value, desc in rows:
-            table_html += "<tr>"
-            table_html += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;"><strong>{level}</strong></td>'
-            table_html += f'<td style="padding: 2px 4px; border: 1px solid #ddd; text-align: center; white-space: nowrap;"><strong>{kp_value}</strong></td>'
-            table_html += f'<td style="padding: 2px 4px; border: 1px solid #ddd; white-space: nowrap;">{desc}</td>'
-            table_html += "</tr>\n"
+            table += f"| **{level}** | **{kp_value}** | {desc} |\n"
 
-        table_html += "</tbody></table>\n"
-        return table_html
+        return table
 
     def get_status_level_color(self, kp: float) -> tuple[str, str, str]:
         """Get geomagnetic status, level, and color based on Kp value.
@@ -620,9 +595,13 @@ class KpMonitor:
 
             email_sent = self.send_alert(subject, message)
             _ = self.copy_image()
-            message_for_file = message.replace("cid:forecast_image", self.LOCAL_IMAGE_PATH)
+            message_for_file = markdown.markdown(
+                message.replace("cid:forecast_image", self.LOCAL_IMAGE_PATH),
+                extensions=["tables", "fenced_code", "footnotes", "nl2br"],
+            )
+            html_output = self.basic_html_format(message_for_file)
             with open("index.html", "w") as f:
-                f.write(message_for_file)
+                f.write(html_output)
 
             if email_sent:
                 self.last_alert_time = pd.Timestamp.now(tz="UTC")
@@ -644,8 +623,19 @@ class KpMonitor:
         subject : str
             Email subject line
         message : str
-            Email message content (HTML formatted)
+            Email message content (Markdown formatted, will be converted to HTML)
         """
+        html_message = markdown.markdown(
+            message,
+            extensions=[
+                "tables",
+                "fenced_code",
+                "footnotes",
+                "nl2br",
+            ],
+        )
+        html_message = self.basic_html_format(html_message)
+
         # root message as multipart/related
         msg_root = MIMEMultipart("related")
         msg_root["From"] = "pager"
@@ -662,7 +652,7 @@ class KpMonitor:
         plain_text = "Your email client does not support HTML."
         msg_alternative.attach(MIMEText(plain_text, "plain"))
 
-        msg_alternative.attach(MIMEText(message, "html"))
+        msg_alternative.attach(MIMEText(html_message, "html"))
         with open(self.LOCAL_IMAGE_PATH, "rb") as f:
             img = MIMEImage(f.read())
             img.add_header("Content-ID", "<forecast_image>")
@@ -671,6 +661,31 @@ class KpMonitor:
 
         with smtplib.SMTP("localhost") as smtp:
             smtp.send_message(msg_root)
+
+    def basic_html_format(self, message: str) -> str:
+        formatting = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #000000; max-width: 1200px; margin: 0 auto; padding: 20px; }}
+                    table {{ border-collapse: collapse; margin: 20px 0; width: 100%; }}
+                    th, td {{ padding: 8px 12px; border: 1px solid #ddd; text-align: left; }}
+                    th {{ background-color: #f0f0f0; font-weight: bold; }}
+                    img {{ max-width: 100%; height: auto; }}
+                    h1 {{ color: #d9534f; }}
+                    h2 {{ color: #5bc0de; margin-top: 30px; }}
+                    h3 {{ color: #000000; }}
+                    small {{ font-size: 12px; color: #333; }}
+                    hr {{ border: 0; border-top: 1px solid #ddd; margin: 20px 0; }}
+                </style>
+            </head>
+            <body>
+            {message}
+            </body>
+            </html>
+            """
+        return formatting
 
     def run_continuous_monitoring(self) -> None:
         """
