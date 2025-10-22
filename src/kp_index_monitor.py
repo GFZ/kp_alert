@@ -21,7 +21,7 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -29,16 +29,6 @@ import requests
 import typer
 
 from src.config import MonitorConfig
-
-
-def log_uncaught_exceptions(exc_type, exc_value, exc_traceback):
-    if issubclass(exc_type, KeyboardInterrupt):
-        sys.__excepthook__(exc_type, exc_value, exc_traceback)
-        return
-    logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
-
-
-sys.excepthook = log_uncaught_exceptions
 
 
 @dataclass
@@ -137,6 +127,15 @@ class KpMonitor:
         Sets up logging handlers for both file and console output with
         appropriate formatting and log levels from configuration.
         """
+
+        def log_uncaught_exceptions(exc_type, exc_value, exc_traceback):
+            if issubclass(exc_type, KeyboardInterrupt):
+                sys.__excepthook__(exc_type, exc_value, exc_traceback)
+                return
+            logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+        sys.excepthook = log_uncaught_exceptions
+
         logging.basicConfig(
             level=self.config.log_level,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -289,7 +288,7 @@ class KpMonitor:
 
         return prev_message
 
-    def get_observed_kp(self, start: pd.Timestamp) -> Optional[float]:
+    def get_observed_kp(self, start: pd.Timestamp) -> Tuple[str, float] | None:
         """
         Fetch observed Kp index data from GFZ API.
 
@@ -300,12 +299,15 @@ class KpMonitor:
 
         Returns
         -------
-        Optional[float]
-            Observed Kp index value
+        Tuple[str, float] or None
+            Tuple with datetime and Kp value if found, None otherwise
 
         """
         try:
-            for _ in range(2):
+            max_attempts = 8  # search back up to 24 hours (8 * 3-hou)
+            attempts = 0
+
+            while attempts < max_attempts:
                 start_date_str = start.strftime("%Y-%m-%dT%H:%M:%SZ")
                 end_date_str = (start + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
                 url = f"https://kp.gfz.de/app/json/?start={start_date_str}&end={end_date_str}&index=Kp"
@@ -316,13 +318,17 @@ class KpMonitor:
                 response.raise_for_status()
 
                 data = response.json()
-                if len(data["Kp"]) == 0:
-                    start -= timedelta(hours=3)
-                    self.logger.warning(f"No observed Kp data found for {start_date_str}, shifting 3 hours back")
-                else:
-                    return data["Kp"][0]
 
-            self.logger.warning("No observed Kp data found after shifting 3 hours back, returning empty data")
+                if len(data.get("Kp", [])) > 0:
+                    self.logger.info(f"Observed Kp data found for {data["datetime"][0]} : {data['Kp'][0]}")
+                    return data["datetime"][0], data["Kp"][0]
+
+                else:
+                    self.logger.warning(f"No observed Kp data found for {start_date_str}, shifting 3 hours back")
+                    start -= timedelta(hours=3)
+                    attempts += 1
+
+            self.logger.warning("No observed Kp data found after multiple shifts")
             return None
 
         except Exception as e:
@@ -345,15 +351,16 @@ class KpMonitor:
         """
         high_records = analysis["high_kp_records"]
         probability_df = analysis["probability_df"]
+        probability_df = probability_df[probability_df.index >= self.current_utc_time]
         current_kp = analysis.next_24h_forecast["median"].iloc[0]
-        status, _, color = self.get_status_level_color(current_kp)
+        status, _, _ = self.get_status_level_color(current_kp)
 
         max_values = analysis["max_df"]
 
         prob_at_time = 24  # hours
         target_time = self.current_utc_time + pd.Timedelta(hours=prob_at_time)
-        nearest_idx = probability_df.index.get_indexer([target_time], method="bfill")[0]
-        prob_value = probability_df.iloc[nearest_idx]["Probability"]
+        nearest_idx = target_time.round("3h")
+        high_prob_value = probability_df[:nearest_idx]["Probability"].max()
 
         threshold_status, threshold_level, _ = self.get_status_level_color(self.config.kp_alert_threshold)
 
@@ -369,7 +376,8 @@ class KpMonitor:
             start_time = probability_df.index[0]
             end_time = probability_df.index[nearest_idx]
 
-        observed_kp = self.get_observed_kp(analysis.next_24h_forecast.index[0])
+        observed_time, observed_kp = self.get_observed_kp(analysis.next_24h_forecast.index[0])
+        prob_at_start_time = probability_df.loc[start_time]["Probability"]
 
         if observed_kp is not None:
             observed_status, _, _ = self.get_status_level_color(observed_kp)
@@ -379,18 +387,29 @@ class KpMonitor:
         start_time_kp_min_status, _, _ = self.get_status_level_color(high_records.loc[start_time]["minimum"].min())
         end_time_kp_max_status, _, _ = self.get_status_level_color(high_records.loc[end_time]["maximum"].max())
 
+        if start_time == end_time:
+            message_prefix = f"""At {start_time.strftime("%Y-%m-%d %H:%M")} UTC"""
+        else:
+            message_prefix = (
+                f"""From {start_time.strftime("%Y-%m-%d %H:%M")} UTC to {end_time.strftime("%Y-%m-%d %H:%M")} UTC"""
+            )
+        if observed_time != analysis.next_24h_forecast.index[0]:
+            obs_message_prefix = f""" (Observed Kp data available up to {datetime.strptime(observed_time.strip(), "%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d %H:%M")} UTC)"""
+        else:
+            obs_message_prefix = ""
+
         message = f"""<html><body>
             <h1><strong>SPACE WEATHER ALERT - {threshold_status} ({threshold_level}) Predicted</strong></h1>
-            <h3>From {start_time.strftime("%Y-%m-%d %H:%M")} UTC to {end_time.strftime("%Y-%m-%d %H:%M")} UTC, Kp is expected to be above {self.config.kp_alert_threshold} ({threshold_level}) with &ge; {prob_value * 100:.0f}% probability with {start_time_kp_min_status.replace("CONDITIONS", "")} to {end_time_kp_max_status}.</h3>
+            <h3>{message_prefix} Kp is expected to be above {self.config.kp_alert_threshold} ({threshold_level}) with &ge; {prob_at_start_time * 100:.0f}% probability with {start_time_kp_min_status.replace("CONDITIONS", "")} to {end_time_kp_max_status}.</h3>
             <h3>Current Predicted Conditions: {status}<br>
-            Current Observed Conditions: {observed_status}</h3>
+            Current Observed Conditions: {observed_status} {obs_message_prefix}</h3>
 
                     <h2><strong>ALERT SUMMARY</strong></h2>
                     <h3>
                     <ul>
                         <li><strong>Alert sent at: </strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC</li>
                         <li><strong>Maximum Kp &ge; {DECIMAL_TO_KP[max_kp_at_finite_time]} with {max_kp_at_finite_time_status} may occur </strong> {max_values.idxmax().strftime("%Y-%m-%d %H:%M")} UTC onwards </li>
-                        <li><strong>{prob_value * 100:.0f}% Probability of {threshold_status} in next {prob_at_time} hours</strong></li>
+                        <li><strong>{high_prob_value * 100:.0f}% Probability of {threshold_status} ({threshold_level}) within next {prob_at_time} hours</strong></li>
                     </ul>
                     </h3>
                     """
@@ -683,7 +702,7 @@ class KpMonitor:
                 time.sleep(300)
 
 
-app = typer.Typer(help="Kp Index Space Weather Monitor", add_completion=False)
+app = typer.Typer(help="Kp Index Space Weather Monitor", add_completion=False, pretty_exceptions_enable=False)
 
 
 @app.command()
