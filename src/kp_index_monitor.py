@@ -367,14 +367,13 @@ class KpMonitor:
         max_kp_at_finite_time = np.round(max_values.max(), 2)
 
         max_kp_at_finite_time_status, _, _ = self.get_status_level_color(max_kp_at_finite_time)
-
         mask = probability_df["Probability"] >= 0.4
         if mask.any():
             start_time = probability_df.index[mask][0]
             end_time = probability_df.index[mask][-1]
         else:
             start_time = probability_df.index[0]
-            end_time = probability_df.index[nearest_idx]
+            end_time = high_records["maximum"].idxmax()
 
         observed_time, observed_kp = self.get_observed_kp(analysis.next_24h_forecast.index[0])
         prob_at_start_time = probability_df.loc[start_time]["Probability"]
