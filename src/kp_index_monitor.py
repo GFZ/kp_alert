@@ -349,7 +349,6 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
         max_kp_at_finite_time = np.round(max_values.max(), 2)
 
         max_kp_at_finite_time_status, _, _ = self.get_status_level_color(max_kp_at_finite_time)
-
         mask = probability_df["Probability"] >= 0.4
         if mask.any():
             start_time = probability_df.index[mask][0]
