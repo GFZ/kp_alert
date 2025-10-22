@@ -235,42 +235,38 @@ class KpMonitor:
 <small>
 © {datetime.now().year} GFZ Helmholtz Centre for Geosciences | GFZ Helmholtz-Zentrum für Geoforschung  
 The data/data products are provided "as-is" without warranty of any kind either expressed or implied, including but not limited to the implied warranties of merchantability, correctness and fitness for a particular purpose. The entire risk as to the quality and performance of the Data/data products is with the Licensee.
-
 In no event will GFZ be liable for any damages direct, indirect, incidental, or consequential, including damages for any lost profits, lost savings, or other incidental or consequential damages arising out of the use or inability to use the data/data products.
 </small>
             """
 
     def _kp_html_table(self, record: pd.DataFrame, probabilities: pd.DataFrame) -> str:
         """Generate markdown table for Kp index records."""
-        # Build markdown table header
         table = f"""
-| Time (UTC) | Probability (Kp ≥ {self.kp_threshold_str}) | Min Kp Index[^1] | Max Kp Index[^2] | Median Kp Index[^3] | Activity[^4][^5] |
+| Time (UTC) | Probability (Kp ≥ {self.kp_threshold_str}) | Min Kp Index[^1] | Max Kp Index[^2] | Median Kp Index[^3] | Activity[^4][^5]|
 |------------|-------------------------------------------|------------------|------------------|---------------------|------------------|
 """
-        
-        # Add table rows
         for _, row in record.iterrows():
             kp_val_max = np.round(row["maximum"], 2)
             kp_val_med = np.round(row["median"], 2)
             kp_val_min = np.round(row["minimum"], 2)
             _, level_min, color_min = self.get_status_level_color(kp_val_min)
             _, level_max, color_max = self.get_status_level_color(kp_val_max)
-            
+
             time_idx = row["Time (UTC)"]
             prob = probabilities.loc[time_idx, "Probability"]
-            
+
             time_str = row["Time (UTC)"].strftime("%Y-%m-%d %H:%M")
             prob_str = f"{prob * 100:.0f}%"
             activity_str = f'<span style="color: {color_min};">{level_min}</span> - <span style="color: {color_max};">{level_max}</span>'
-            
+
             table += f"| **{time_str}** | **{prob_str}** | **{DECIMAL_TO_KP[kp_val_min]}** | **{DECIMAL_TO_KP[kp_val_max]}** | **{DECIMAL_TO_KP[kp_val_med]}** | {activity_str} |\n"
-        
-        # Add footnotes
+
         table += """
 [^1]: Min Kp Index: Minimum value of Kp Ensembles
 [^2]: Max Kp Index: Maximum value of Kp Ensembles
 [^3]: Median Kp Index: Median value of Kp Ensembles
 [^4]: Geomagnetic Activity Level based on Min-Max range
+[^5]: See the GEOMAGNETIC ACTIVITY SCALE table
 """
         return table
 
@@ -360,7 +356,7 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
             end_time = probability_df.index[mask][-1]
         else:
             start_time = probability_df.index[0]
-            end_time = probability_df.index[nearest_idx]
+            end_time = high_records["maximum"].idxmax()
 
         observed_time, observed_kp = self.get_observed_kp(analysis.next_24h_forecast.index[0])
         prob_at_start_time = probability_df.loc[start_time]["Probability"]
@@ -384,13 +380,12 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
         else:
             obs_message_prefix = ""
 
-        # Create message in Markdown format
         message = f"""# **SPACE WEATHER ALERT - {threshold_status} ({threshold_level}) Predicted**
 
 ### {message_prefix} Kp is expected to be above {self.config.kp_alert_threshold} ({threshold_level}) with ≥ {prob_at_start_time * 100:.0f}% probability with {start_time_kp_min_status.replace("CONDITIONS", "")} to {end_time_kp_max_status}.
 
-### Current Predicted Conditions: {status}  
-### Current Observed Conditions: {observed_status} {obs_message_prefix}
+**Current Predicted Conditions:** {status.replace("CONDITIONS", "")}
+**Current Observed Conditions:** {observed_status.replace("CONDITIONS", "")} {obs_message_prefix}
 
 ## **ALERT SUMMARY**
 
@@ -404,14 +399,14 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
 
 """
         message += self._kp_html_table(high_records, probability_df)
-        
+
         AURORA_KP = 6.33
         high_records_above_threshold = high_records[
             (high_records["minimum"].astype(float) >= AURORA_KP)
             | (high_records["median"].astype(float) >= AURORA_KP)
             | (high_records["maximum"].astype(float) >= AURORA_KP)
         ]
-        
+
         if not high_records_above_threshold.empty:
             message += f"""
 ## **AURORA WATCH:**
@@ -419,16 +414,13 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
 **Note:** Kp ≥ {DECIMAL_TO_KP[AURORA_KP]} indicate potential auroral activity at Berlin latitudes.
 
 """
-        
-        message += """## **GEOMAGNETIC ACTIVITY SCALE**[^5]
 
-"""
+        message += """## GEOMAGNETIC ACTIVITY SCALE"""
         message += self.get_storm_level_description_table()
         message += "\n"
         message += self.footer()
 
         return message.strip()
-
 
     def create_subject(self, analysis: AnalysisResults) -> str:
         """
@@ -457,7 +449,7 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
         G3 = "[NOAA [G3]](https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%203)"
         G4 = "[NOAA [G4]](https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%204)"
         G5 = "[NOAA [G5]](https://www.swpc.noaa.gov/noaa-scales-explanation#:~:text=G%205)"
-        
+
         rows = [
             ("Quiet", "0-3", "Quiet conditions"),
             ("Active", "4", "Moderate geomagnetic activity"),
@@ -467,16 +459,15 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
             ("Severe Storm (G4)", "8", f"Possible widespread voltage control problems. For more details see {G4}"),
             ("Extreme Storm (G5)", "9", f"Widespread power system voltage control problems. For more details see {G5}"),
         ]
-        
+
         table = """
 | Level | Kp Value | Description |
 |-------|----------|-------------|
 """
         for level, kp_value, desc in rows:
             table += f"| **{level}** | **{kp_value}** | {desc} |\n"
-        
-        return table
 
+        return table
 
     def get_status_level_color(self, kp: float) -> tuple[str, str, str]:
         """Get geomagnetic status, level, and color based on Kp value.
@@ -605,32 +596,11 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
 
             email_sent = self.send_alert(subject, message)
             _ = self.copy_image()
-            # Convert markdown to HTML for file output
             message_for_file = markdown.markdown(
                 message.replace("cid:forecast_image", self.LOCAL_IMAGE_PATH),
                 extensions=["tables", "fenced_code", "footnotes", "nl2br"],
             )
-            # Wrap in HTML structure
-            html_output = f"""<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 0 auto; padding: 20px; }}
-        table {{ border-collapse: collapse; margin: 20px 0; width: 100%; }}
-        th, td {{ padding: 8px 12px; border: 1px solid #ddd; text-align: left; }}
-        th {{ background-color: #f0f0f0; font-weight: bold; }}
-        img {{ max-width: 100%; height: auto; }}
-        h1 {{ color: #d9534f; }}
-        h2 {{ color: #5bc0de; margin-top: 30px; }}
-        h3 {{ color: #5cb85c; }}
-        small {{ font-size: 12px; color: #888; }}
-        hr {{ border: 0; border-top: 1px solid #ddd; margin: 20px 0; }}
-    </style>
-</head>
-<body>
-{message_for_file}
-</body>
-</html>"""
+            html_output = self.basic_html_format(message_for_file)
             with open("index.html", "w") as f:
                 f.write(html_output)
 
@@ -656,7 +626,6 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
         message : str
             Email message content (Markdown formatted, will be converted to HTML)
         """
-        # Convert markdown to HTML
         html_message = markdown.markdown(
             message,
             extensions=[
@@ -666,31 +635,8 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
                 "nl2br",
             ],
         )
-        
-        # Wrap in basic HTML structure with some styling
-        html_message = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 0 auto; padding: 20px; }}
-        table {{ border-collapse: collapse; margin: 20px 0; width: 100%; }}
-        th, td {{ padding: 8px 12px; border: 1px solid #ddd; text-align: left; }}
-        th {{ background-color: #f0f0f0; font-weight: bold; }}
-        img {{ max-width: 100%; height: auto; }}
-        h1 {{ color: #d9534f; }}
-        h2 {{ color: #5bc0de; margin-top: 30px; }}
-        h3 {{ color: #5cb85c; }}
-        small {{ font-size: 12px; color: #888; }}
-        hr {{ border: 0; border-top: 1px solid #ddd; margin: 20px 0; }}
-    </style>
-</head>
-<body>
-{html_message}
-</body>
-</html>
-"""
-        
+        html_message = self.basic_html_format(html_message)
+
         # root message as multipart/related
         msg_root = MIMEMultipart("related")
         msg_root["From"] = "pager"
@@ -717,6 +663,30 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
         with smtplib.SMTP("localhost") as smtp:
             smtp.send_message(msg_root)
 
+    def basic_html_format(self, message: str) -> str:
+        formatting = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #000000; max-width: 1200px; margin: 0 auto; padding: 20px; }}
+                    table {{ border-collapse: collapse; margin: 20px 0; width: 100%; }}
+                    th, td {{ padding: 8px 12px; border: 1px solid #ddd; text-align: left; }}
+                    th {{ background-color: #f0f0f0; font-weight: bold; }}
+                    img {{ max-width: 100%; height: auto; }}
+                    h1 {{ color: #d9534f; }}
+                    h2 {{ color: #5bc0de; margin-top: 30px; }}
+                    h3 {{ color: #000000; }}
+                    small {{ font-size: 12px; color: #333; }}
+                    hr {{ border: 0; border-top: 1px solid #ddd; margin: 20px 0; }}
+                </style>
+            </head>
+            <body>
+            {message}
+            </body>
+            </html>
+            """
+        return formatting
 
     def run_continuous_monitoring(self) -> None:
         """
