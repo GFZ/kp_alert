@@ -190,6 +190,7 @@ class KpMonitor:
         """
         try:
             # Get current maximum values
+            self.logger.info(f"Current UTC Time: {self.current_utc_time}")
             max_values = df[df.index >= self.current_utc_time]["maximum"]
             max: float = np.round(max_values.max(), 2)
 
@@ -242,7 +243,7 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
     def _kp_html_table(self, record: pd.DataFrame, probabilities: pd.DataFrame) -> str:
         """Generate markdown table for Kp index records."""
         table = f"""
-| Time (UTC) | Probability (Kp ≥ {self.kp_threshold_str}) | Min Kp Index[^1] | Max Kp Index[^2] | Median Kp Index[^3] | Activity[^4][^5]|
+| Time (UTC) | Probability (Kp ≥ {self.kp_threshold_str}) | Min Kp Index<sup>[<a href="#fn1">1</a>]</sup> | Max Kp Index<sup>[<a href="#fn2">2</a>]</sup> | Median Kp Index<sup>[<a href="#fn3">3</a>]</sup> | Activity<sup>[<a href="#fn4">4</a>][<a href="#fn5">5</a>]</sup> |
 |------------|-------------------------------------------|------------------|------------------|---------------------|------------------|
 """
         for _, row in record.iterrows():
@@ -262,11 +263,10 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
             table += f"| **{time_str}** | **{prob_str}** | **{DECIMAL_TO_KP[kp_val_min]}** | **{DECIMAL_TO_KP[kp_val_max]}** | **{DECIMAL_TO_KP[kp_val_med]}** | {activity_str} |\n"
 
         table += """
-[^1]: Min Kp Index: Minimum value of Kp Ensembles
-[^2]: Max Kp Index: Maximum value of Kp Ensembles
-[^3]: Median Kp Index: Median value of Kp Ensembles
-[^4]: Geomagnetic Activity Level based on Min-Max range
-[^5]: See the GEOMAGNETIC ACTIVITY SCALE table
+<a id="fn1"></a><sup>1</sup> Min Kp Index: Minimum value of Kp Ensembles  
+<a id="fn2"></a><sup>2</sup> Max Kp Index: Maximum value of Kp Ensembles  
+<a id="fn3"></a><sup>3</sup> Median Kp Index: Median value of Kp Ensembles  
+<a id="fn4"></a><sup>4</sup> Geomagnetic Activity Level based on Min-Max range
 """
         return table
 
@@ -354,7 +354,7 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
             start_time = probability_df.index[mask][0]
             end_time = probability_df.index[mask][-1]
         else:
-            start_time = probability_df.index[0]
+            start_time = high_records["minimum"].idxmax()
             end_time = high_records["maximum"].idxmax()
 
         observed_time, observed_kp = self.get_observed_kp(analysis.next_24h_forecast.index[0])
@@ -414,7 +414,7 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
 
 """
 
-        message += """## GEOMAGNETIC ACTIVITY SCALE"""
+        message += """## GEOMAGNETIC ACTIVITY SCALE <a id="fn5"></a><sup>5</sup>"""
         message += self.get_storm_level_description_table()
         message += "\n"
         message += self.footer()
