@@ -379,7 +379,8 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
         else:
             obs_message_prefix = ""
 
-        message = f"""# **SPACE WEATHER ALERT - {threshold_status} ({threshold_level}) Predicted**
+        message = f"""<h2 style="color: #d9534f;">SPACE WEATHER ALERT - {threshold_status} ({threshold_level}) Predicted</h2>
+
 
 ### {message_prefix} Kp is expected to be above {self.config.kp_alert_threshold} ({threshold_level}) with ≥ {prob_at_start_time * 100:.0f}% probability with {start_time_kp_min_status.replace("CONDITIONS", "")} to {end_time_kp_max_status}.
 
