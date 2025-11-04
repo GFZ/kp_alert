@@ -640,7 +640,8 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
         # root message as multipart/related
         msg_root = MIMEMultipart("related")
         msg_root["From"] = "pager"
-        msg_root["Reply-To"] = "jhawar@gfz.de"
+        msg_root["Reply-To"] = "jhawar@gfz-potsdam.de"
+
         if len(recipients) == 1:
             msg_root["To"] = recipients[0]
         else:
