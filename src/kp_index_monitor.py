@@ -372,7 +372,7 @@ In no event will GFZ be liable for any damages direct, indirect, incidental, or 
             message_prefix = f"""At {start_time.strftime("%Y-%m-%d %H:%M")} UTC"""
         else:
             message_prefix = (
-                f"""From {start_time.strftime("%Y-%m-%d %H:%M")} UTC to {end_time.strftime("%Y-%m-%d %H:%M")} UTC"""
+                f"""From {end_time.strftime("%d.%m.%Y %H:%M")} UTC to {start_time.strftime("%d.%m.%Y %H:%M")} UTC"""
             )
         if observed_time != analysis.next_24h_forecast.index[0]:
             obs_message_prefix = f""" (Observed Kp data available up to {datetime.strptime(observed_time.strip(), "%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d %H:%M")} UTC)"""
